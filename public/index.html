@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>番剧轮播</title>
+    <link rel="stylesheet" href="/style.css" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%237c5cff'/%3E%3Cpath d='M12 9l12 7-12 7z' fill='white'/%3E%3C/svg%3E" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="logo">▶</span>
+        <span>番剧轮播</span>
+        <span class="badge" id="modeBadge">—</span>
+      </div>
+      <nav class="channels" id="channels"></nav>
+      <div class="clock">
+        <span id="clock">--:--:--</span>
+        <span class="tz" id="tzLabel"></span>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="stage">
+        <div class="video-wrap" id="videoWrap">
+          <video id="player" playsinline preload="auto" muted></video>
+
+          <div class="overlay" id="overlay">
+            <button class="start-btn" id="startBtn">▶ 开始收看</button>
+            <p class="hint">直播频道 · 打开即从当前播出进度开始</p>
+            <p class="error" id="errorText" hidden></p>
+          </div>
+
+          <div class="live-tag" id="liveTag">LIVE</div>
+        </div>
+
+        <div class="nowbar">
+          <div class="nowline">
+            <span class="series" id="seriesName">载入中…</span>
+            <span class="ep" id="epLabel"></span>
+            <span class="seg" id="segLabel"></span>
+          </div>
+          <div class="subline" id="epTitle"></div>
+          <div class="progress"><div class="progress-fill" id="progressFill"></div></div>
+          <div class="times">
+            <span id="posText">--:--</span>
+            <span class="sync" id="syncText">连接中…</span>
+            <span id="endText">--:--</span>
+          </div>
+        </div>
+      </section>
+
+      <aside class="epg">
+        <div class="epg-head">
+          <h2>节目单</h2>
+          <span class="epg-sub" id="epgSub"></span>
+        </div>
+        <ol class="epg-list" id="epgList"></ol>
+        <div class="epg-foot" id="libraryInfo"></div>
+      </aside>
+    </main>
+
+    <footer class="foot">
+      <span id="statusText">初始化…</span>
+      <span class="spacer"></span>
+      <a id="directLink" href="#" target="_blank" rel="noreferrer">直链</a>
+      <button class="ghost" id="resyncBtn" title="强制与直播进度对齐">重新同步</button>
+    </footer>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

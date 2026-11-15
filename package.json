@@ -1,0 +1,31 @@
+{
+  "name": "anime-rotator",
+  "version": "1.0.0",
+  "private": true,
+  "description": "WebDAV 动画库轮播：多规则编排播出时间表，后端按时间定位视频与进度，前端直读视频并同步进度",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "scan": "node src/cli/scan.mjs",
+    "plan": "node src/cli/plan.mjs",
+    "start": "node src/cli/serve.mjs",
+    "serve": "node src/cli/serve.mjs",
+    "test": "node tools/selftest.mjs",
+    "smoke": "node tools/smoke-api.mjs && node tools/smoke-frontend.mjs",
+    "smoke:api": "node tools/smoke-api.mjs",
+    "smoke:front": "node tools/smoke-frontend.mjs",
+    "docker:build": "docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build",
+    "docker:up": "docker compose up -d"
+  },
+  "keywords": [
+    "webdav",
+    "anime",
+    "live-tv",
+    "playlist",
+    "scheduler",
+    "docker"
+  ],
+  "license": "MIT"
+}

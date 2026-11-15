@@ -1,0 +1,89 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8088,
+    "publicDir": "public"
+  },
+  "timezone": "Asia/Shanghai",
+
+  "webdav": {
+    "baseUrl": "",
+    "root": "动画",
+    "username": "",
+    "password": "",
+    "timeoutMs": 30000
+  },
+
+  "paths": {
+    "library": "data/library.json",
+    "durations": "data/durations.json"
+  },
+
+  "stream": {
+    "mode": "proxy",
+    "urlPrefix": null,
+    "embedCredentials": false,
+    "token": null,
+    "passRange": true,
+    "headers": {}
+  },
+
+  "library": {
+    "fallbackDurationMs": 1440000
+  },
+
+  "channels": [
+    {
+      "id": "main",
+      "name": "主线连播",
+      "description": "整库按系列名顺序连播，一部播完接下一部",
+      "mode": "loop",
+      "anchor": "2026-01-01T00:00:00+08:00",
+      "program": [
+        {
+          "label": "系列连播",
+          "rule": { "type": "sequential", "order": "name" }
+        }
+      ]
+    },
+    {
+      "id": "mix",
+      "name": "混编轮播",
+      "description": "2 小时随机档 + 6 集轮播档交替",
+      "mode": "loop",
+      "anchor": "2026-01-01T00:00:00+08:00",
+      "program": [
+        {
+          "label": "随机档",
+          "rule": { "type": "shuffle" },
+          "hours": 2
+        },
+        {
+          "label": "轮播档",
+          "rule": { "type": "interleave" },
+          "count": 6
+        }
+      ]
+    },
+    {
+      "id": "daily",
+      "name": "日编排",
+      "description": "按时段编排：深夜随机 / 早间轮播 / 午后加权 / 黄金档连播",
+      "mode": "daily",
+      "program": [
+        {
+          "fill": true,
+          "rule": {
+            "type": "daypart",
+            "slots": [
+              { "from": "00:00", "to": "06:00", "label": "深夜档", "rule": { "type": "shuffle" } },
+              { "from": "06:00", "to": "12:00", "label": "早间档", "rule": { "type": "interleave" } },
+              { "from": "12:00", "to": "18:00", "label": "午后档", "rule": { "type": "weighted" } },
+              { "from": "18:00", "to": "24:00", "label": "黄金档", "rule": { "type": "sequential", "order": "shuffle" } }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

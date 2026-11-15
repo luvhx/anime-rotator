@@ -1,0 +1,13 @@
+node_modules
+data
+config.json
+*.log
+.git
+.gitignore
+.github
+docker-compose*.yml
+Dockerfile
+.dockerignore
+README.md
+webdav-动画-目录清单.md
+webdav-动画-目录清单.json
