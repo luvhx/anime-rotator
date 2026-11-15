@@ -68,7 +68,7 @@ npm test                             # 编排引擎自检（不联网，CI 同�
 
 ## Docker 部署（预构建镜像）
 
-镜像：`ghcr.io/luvhx/anime-rotator:latest`（linux/amd64 + linux/arm64，约 150 MB，零依赖）
+镜像：`ghcr.io/luvhx/anime-rotator`（`latest` / `1.0.0` / `main`，linux/amd64 + linux/arm64，压缩后约 59 MB，零依赖，**公开可匿名拉取**）
 
 ### 三步启动
 
@@ -161,7 +161,13 @@ STREAM_URL_PREFIX=https://anime.example.com/media
 
 ### CI / 镜像说明
 
-`.github/workflows/build.yml`：push 到 `main` 或打 `v*` tag 时，先跑语法检查 + 编排自检（`tools/selftest.mjs`，不联网），再构建 amd64/arm64 镜像推送到 GHCR。首次推送后到 GitHub Packages 把镜像设为 public，`docker compose` 才能免登录拉取。
+`.github/workflows/build.yml`：push 到 `main` 或打 `v*` tag 时，先跑语法检查 + 编排自检（`tools/selftest.mjs`，不联网），再构建 amd64/arm64 镜像推送到 GHCR。
+
+镜像当前是公开的（已验证匿名 `tags/list` 返回 200）。若你 fork 后自己发布，记得在仓库 **Packages → 该镜像 → Package settings** 里把可见性设为 public，否则 `docker compose` 拉取前需要 `docker login ghcr.io`：
+
+```bash
+echo "$GITHUB_TOKEN" | docker login ghcr.io -u <用户名> --password-stdin
+```
 
 ---
 
