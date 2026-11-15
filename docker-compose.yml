@@ -62,13 +62,19 @@ services:
     image: ${IMAGE:-ghcr.io/OWNER/anime-rotator:latest}
     profiles: ["recurring"]
     restart: unless-stopped
-    entrypoint: ["/bin/sh", "-c"]
     command:
+      - /bin/sh
+      - -c
       - |
         while true; do
           sleep 86400
           echo "[rescan] $(date -Iseconds) 重新扫描媒体库"
-          node src/cli/scan.mjs || echo "[rescan] 失败，等下一轮"
+          if node src/cli/scan.mjs; then
+            echo "[rescan] 通知主服务热加载索引"
+            wget -q -O- --post-data='' http://anime-rotator:8088/api/reload || echo "[rescan] 热加载失败，请重启主服务"
+          else
+            echo "[rescan] 扫描失败，等下一轮"
+          fi
         done
     environment:
       TZ: "${TZ:-Asia/Shanghai}"

@@ -424,6 +424,19 @@ export class Library {
     return new Library(data);
   }
 
+  /** 重新加载索引文件（重扫后热更新，不用重启服务） */
+  reload(file) {
+    const fresh = Library.load(file);
+    this.raw = fresh.raw;
+    this.series = fresh.series;
+    this.seriesById = fresh.seriesById;
+    this.seriesByName = fresh.seriesByName;
+    this.episodes = fresh.episodes;
+    this.byFileId = fresh.byFileId;
+    this.stats = fresh.stats;
+    return this;
+  }
+
   /** 某系列的全部剧集（含每集扩展字段） */
   episodesOf(seriesId) {
     return this.seriesById.get(seriesId)?.__full || [];

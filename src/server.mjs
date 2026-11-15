@@ -308,6 +308,13 @@ export function createApp(config) {
       if (pathname === '/api/library') return apiLibrary(url, res);
       if (pathname === '/api/report-duration' && req.method === 'POST') return await apiReportDuration(req, res);
 
+      if (pathname === '/api/reload' && req.method === 'POST') {
+        if (!fs.existsSync(config.paths.library)) throw new HttpError(409, '索引文件不存在，请先执行 scan');
+        library.reload(config.paths.library);
+        timelines.clear();
+        return json(res, { ok: true, series: library.series.length, episodes: library.episodes.length });
+      }
+
       if (pathname.startsWith('/stream/')) {
         const fileId = pathname.slice('/stream/'.length);
         return apiStream(req, res, url, fileId);

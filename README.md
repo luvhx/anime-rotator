@@ -114,7 +114,14 @@ volumes:
 ### 定时重扫（新增番剧自动进时间轴）
 
 ```bash
-docker compose --profile recurring up -d     # 起一个每天 04:00 重扫的 sidecar
+docker compose --profile recurring up -d     # 起一个每天重扫的 sidecar
+```
+
+sidecar 扫完会调用 `POST /api/reload` 让主服务热加载，不用重启；手动重扫后也可以这样刷新：
+
+```bash
+docker compose exec anime-rotator node src/cli/scan.mjs
+curl -X POST http://127.0.0.1:8088/api/reload
 ```
 
 ### 本地构建镜像
@@ -325,7 +332,8 @@ if (Math.abs(video.currentTime - target) > 4) video.currentTime = target;  // �
 | GET | `/api/now?channel=main` | **当前节目**：文件、起止时间、已播偏移、进度、接下来 12 条 |
 | GET | `/api/schedule?channel=main&from=&to=` | 节目单（支持 `date=YYYY-MM-DD`、`limit`） |
 | GET | `/api/library?q=` | 媒体库系列列表 |
-| POST | `/api/report-duration` | 前端回写真实时长 `{fileId, durationMs}` |
+| POST | `/api/report-duration` | 前端回写真实时长 `{fileId, durationMs}`（异常值会被拒绝） |
+| POST | `/api/reload` | 重新加载 `library.json` 并重建时间轴（重扫后热更新，无需重启） |
 | GET | `/stream/<fileId>` | **302** 到直链，或（proxy 模式）转发视频字节流 |
 
 `/api/now` 响应节选：
