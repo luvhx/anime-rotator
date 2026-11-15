@@ -34,6 +34,10 @@ function parseArgs(argv) {
 
 const args = parseArgs(process.argv.slice(2));
 const config = loadConfig(args.config);
+if (!config.webdav.baseUrl) {
+  console.error('✗ 还没有配置 WebDAV 地址：先运行 npm start 打开 /admin 完成配置');
+  process.exit(1);
+}
 const library = Library.load(config.paths.library);
 
 if (args.stats) {

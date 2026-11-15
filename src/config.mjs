@@ -38,6 +38,16 @@ export const DEFAULT_CONFIG = {
   library: {
     fallbackDurationMs: 24 * 60 * 1000,
   },
+  // TMDB：用于节目封面 / 简介 / 播出信息（留空则纯本地模式）
+  tmdb: {
+    apiKey: '',
+    readToken: '',
+    language: 'zh-CN',
+  },
+  settings: {
+    // 运行期设置文件（Web UI 保存到这里）；null = 默认 data/settings.json
+    file: null,
+  },
   channels: [],
 };
 
@@ -107,15 +117,29 @@ export function loadConfig(file) {
   const raw = JSON.parse(fs.readFileSync(configPath, 'utf8'));
   const config = deepMerge(DEFAULT_CONFIG, raw);
   applyEnvOverrides(config);
-  const root = path.dirname(configPath);
   config.__file = configPath;
-  config.__root = root;
+  config.__root = path.dirname(configPath);
+  // allowIncomplete：首次启动允许 WebDAV 未配置，交给 Web UI 完成初始化
+  return finalizeConfig(config, config.__root, { allowIncomplete: true });
+}
+
+/**
+ * 校验 + 归一化（可重复调用：应用 UI 设置后再跑一遍）
+ * @param {object} config 已合并的配置对象（会被原地修改并返回）
+ * @param {string} root   相对路径的基准目录
+ */
+export function finalizeConfig(config, root = PROJECT_ROOT, { allowIncomplete = false } = {}) {
+  if (!config.tmdb) config.tmdb = { ...DEFAULT_CONFIG.tmdb };
   config.paths.library = resolvePath(config.paths.library, root);
   config.paths.durations = resolvePath(config.paths.durations, root);
   config.server.publicDir = resolvePath(config.server.publicDir, root);
+  config.__root = root;
 
   if (!config.webdav.baseUrl) {
-    throw new Error('webdav.baseUrl 不能为空（可在 config.json 里配置，或设置环境变量 WEBDAV_BASE_URL）');
+    if (!allowIncomplete) {
+      throw new Error('webdav.baseUrl 不能为空（可在 Web UI 里配置，或设置环境变量 WEBDAV_BASE_URL）');
+    }
+    config.__incomplete = true;
   }
   if (!isValidTimeZone(config.timezone)) throw new Error(`无效时区：${config.timezone}`);
 
@@ -133,9 +157,32 @@ export function loadConfig(file) {
   }
 
   // 默认流前缀 = WebDAV 根地址
-  if (!config.stream.urlPrefix) config.stream.urlPrefix = config.webdav.baseUrl;
+  if (!config.stream.urlPrefix) config.stream.urlPrefix = config.webdav.baseUrl || null;
   if (!['redirect', 'proxy'].includes(config.stream.mode)) {
     throw new Error(`stream.mode 只能是 redirect 或 proxy，收到：${config.stream.mode}`);
   }
   return config;
+}
+
+/** 从配置推导出可编辑设置（首次打开 Web UI 时的初始值） */
+export function settingsFromConfig(config) {
+  return {
+    webdav: {
+      baseUrl: config.webdav.baseUrl,
+      root: config.webdav.root,
+      username: config.webdav.username,
+      password: config.webdav.password,
+      timeoutMs: config.webdav.timeoutMs,
+    },
+    stream: {
+      mode: config.stream.mode,
+      urlPrefix: config.stream.urlPrefix,
+      token: config.stream.token,
+      embedCredentials: config.stream.embedCredentials,
+    },
+    timezone: config.timezone,
+    tmdb: { ...DEFAULT_CONFIG.tmdb, ...(config.tmdb || {}) },
+    channels: structuredClone(config.channels),
+    selection: { mode: 'all', series: [] },
+  };
 }

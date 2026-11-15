@@ -1,8 +1,8 @@
 {
   "name": "anime-rotator",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
-  "description": "WebDAV 动画库轮播：多规则编排播出时间表，后端按时间定位视频与进度，前端直读视频并同步进度",
+  "description": "WebDAV 动画库轮播：Web UI 配置、多规则编排时间轴、按时间定位视频与进度、302 直链、TMDB 元数据",
   "type": "module",
   "engines": {
     "node": ">=20"
@@ -12,10 +12,13 @@
     "plan": "node src/cli/plan.mjs",
     "start": "node src/cli/serve.mjs",
     "serve": "node src/cli/serve.mjs",
-    "test": "node tools/selftest.mjs",
-    "smoke": "node tools/smoke-api.mjs && node tools/smoke-frontend.mjs",
+    "test": "node tools/selftest.mjs && node tools/smoke-boot.mjs",
+    "smoke": "node tools/smoke-api.mjs && node tools/smoke-frontend.mjs && node tools/smoke-admin.mjs && node tools/smoke-admin-ui.mjs",
     "smoke:api": "node tools/smoke-api.mjs",
     "smoke:front": "node tools/smoke-frontend.mjs",
+    "smoke:admin": "node tools/smoke-admin.mjs",
+    "smoke:admin-ui": "node tools/smoke-admin-ui.mjs",
+    "smoke:boot": "node tools/smoke-boot.mjs",
     "docker:build": "docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build",
     "docker:up": "docker compose up -d"
   },

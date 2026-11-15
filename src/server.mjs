@@ -2,10 +2,21 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { WebDavClient } from './webdav.mjs';
-import { Library, DurationCache } from './library.mjs';
-import { ChannelTimeline, episodeView } from './scheduler.mjs';
+import { Library, DurationCache, scanLibrary } from './library.mjs';
+import { ChannelTimeline, episodeView, RULE_TYPES } from './scheduler.mjs';
 import { buildFileUrl, sendRedirect, proxyFile } from './stream.mjs';
-import { dayStartMs, localParts, fmtDuration, toMs } from './util.mjs';
+import { dayStartMs, localParts, fmtDuration, toMs, clamp, mapLimit } from './util.mjs';
+import {
+  applySettings,
+  loadSettings,
+  saveSettings,
+  publicSettings,
+  validateSettings,
+  withSelection,
+  normalizeSelection,
+} from './settings.mjs';
+import { settingsFromConfig, finalizeConfig } from './config.mjs';
+import { TmdbClient } from './tmdb.mjs';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -30,38 +41,88 @@ class HttpError extends Error {
 
 /**
  * 构建应用
- * @param {object} config 已校验配置
+ * @param {object} baseConfig 已从文件 + 环境变量加载的配置（不含 UI 设置）
  */
-export function createApp(config) {
-  const dav = new WebDavClient(config.webdav);
-  const library = Library.load(config.paths.library);
-  /** @type {Map<string,ChannelTimeline>} */
-  const timelines = new Map();
-  const channelsById = new Map(config.channels.map((c) => [c.id, c]));
+export function createApp(baseConfig) {
+  const state = {
+    baseConfig,
+    settingsFile: baseConfig.settings?.file || path.join(baseConfig.__root || '.', 'data', 'settings.json'),
+    settings: {},
+    config: null,
+    dav: null,
+    library: Library.empty(),
+    timelines: new Map(),
+    tmdb: null,
+    tmdbResolved: new Map(),
+    scan: { running: false, stage: null, done: 0, total: 0, extra: '', startedAt: null, finishedAt: null, error: null },
+    error: null,
+  };
+
+  /* ------------------------- 运行时装配 ------------------------- */
+
+  function rebuild({ reloadLibrary = true } = {}) {
+    const settings = loadSettings(state.settingsFile);
+    state.settings = settings;
+    const merged = applySettings(state.baseConfig, settings);
+    merged.channels = (merged.channels || []).map((ch) => withSelection(ch, merged.selection));
+    const cfg = finalizeConfig(merged, state.baseConfig.__root, { allowIncomplete: true });
+    cfg.settings.file = state.settingsFile;
+    state.config = cfg;
+    state.dav = new WebDavClient(cfg.webdav);
+    state.tmdb = new TmdbClient({
+      ...cfg.tmdb,
+      cacheFile: path.join(path.dirname(cfg.paths.library), 'tmdb-cache.json'),
+    });
+    state.tmdbResolved.clear();
+    state.timelines.clear();
+    if (reloadLibrary) {
+      if (fs.existsSync(cfg.paths.library)) {
+        try {
+          state.library = Library.load(cfg.paths.library);
+          state.error = null;
+        } catch (err) {
+          state.error = `索引加载失败：${err.message}`;
+          state.library = Library.empty();
+        }
+      } else {
+        state.library = Library.empty();
+      }
+    }
+  }
+
+  rebuild();
+
+  const getConfig = () => state.config;
+  const configured = () => Boolean(state.config.webdav.baseUrl);
 
   function getTimeline(channelId) {
-    const id = channelId || config.channels[0].id;
-    let tl = timelines.get(id);
+    if (!state.library.episodes.length) throw new HttpError(503, '媒体库还没有索引，请先在 /admin 里配置并扫描');
+    const id = channelId || state.config.channels[0]?.id;
+    let tl = state.timelines.get(id);
     if (tl) return tl;
-    const def = channelsById.get(id);
+    const def = state.config.channels.find((c) => c.id === id);
     if (!def) throw new HttpError(404, `频道不存在：${id}`);
-    tl = new ChannelTimeline({ channel: def, library, tz: config.timezone });
-    timelines.set(id, tl);
+    tl = new ChannelTimeline({ channel: def, library: state.library, tz: state.config.timezone });
+    state.timelines.set(id, tl);
     return tl;
   }
 
-  /* ---------------------------- 视图 ---------------------------- */
+  function persistSettings(extra = {}) {
+    state.settings = { ...state.settings, ...extra };
+    saveSettings(state.settingsFile, state.settings);
+  }
 
-  const streamConfig = config.stream;
+  /* ------------------------- 视图 ------------------------- */
 
   function directUrlOf(ep, prefixOverride) {
+    const cfg = state.config;
     return buildFileUrl({
-      prefix: prefixOverride || streamConfig.urlPrefix,
+      prefix: prefixOverride || cfg.stream.urlPrefix || cfg.webdav.baseUrl,
       relPath: ep.relPath,
-      root: config.webdav.root,
-      token: streamConfig.token,
-      embedCredentials: streamConfig.embedCredentials,
-      dav,
+      root: cfg.webdav.root,
+      token: cfg.stream.token,
+      embedCredentials: cfg.stream.embedCredentials,
+      dav: state.dav,
     });
   }
 
@@ -71,7 +132,7 @@ export function createApp(config) {
   }
 
   function clockText(ms) {
-    const p = localParts(ms, config.timezone);
+    const p = localParts(ms, state.config.timezone);
     return `${String(p.hour).padStart(2, '0')}:${String(p.minute).padStart(2, '0')}`;
   }
 
@@ -101,25 +162,24 @@ export function createApp(config) {
     } catch (err) {
       error = err.message;
     }
-    return {
-      id: def.id,
-      name: def.name,
-      description: def.description || '',
-      mode: def.mode,
-      stats,
-      error,
-    };
+    return { id: def.id, name: def.name, description: def.description || '', mode: def.mode, stats, error };
   }
 
-  /* ---------------------------- API ---------------------------- */
+  /* ------------------------- 公共 API ------------------------- */
 
   function apiNow(url, res) {
-    const channelId = url.searchParams.get('channel') || config.channels[0].id;
+    const cfg = state.config;
+    if (!state.library.episodes.length) {
+      return json(res, { error: '媒体库还没有索引', setup: true, hint: '打开 /admin 完成配置与扫描' }, 503);
+    }
+    if (!configured()) {
+      return json(res, { error: '还没有配置 WebDAV', setup: true, hint: '打开 /admin 完成配置' }, 503);
+    }
+    const channelId = url.searchParams.get('channel') || cfg.channels[0].id;
     const tl = getTimeline(channelId);
     const now = Date.now();
     const resolved = tl.resolve(now);
-    const preferDirect = url.searchParams.get('mode') === 'direct';
-    const opts = { preferDirect, prefix: url.searchParams.get('prefix') || null };
+    const opts = { preferDirect: url.searchParams.get('mode') === 'direct', prefix: url.searchParams.get('prefix') || null };
 
     const current = programView(
       {
@@ -132,27 +192,21 @@ export function createApp(config) {
       },
       opts,
     );
-
     const upcoming = tl.schedule(now, now + 36 * 3600 * 1000, 40).filter((i) => i.startsAt > now);
-    const next = upcoming.slice(0, 12).map((i) => programView(i, opts));
 
     return json(res, {
       serverTime: now,
-      timezone: config.timezone,
+      timezone: cfg.timezone,
       channel: { id: tl.channel.id, name: tl.channel.name, description: tl.channel.description, mode: tl.channel.mode },
-      now: {
-        ...current,
-        offsetMs: resolved.offsetMs,
-        remainingMs: resolved.remainingMs,
-        progress: resolved.progress,
-      },
-      next,
-      stream: { mode: streamConfig.mode, urlPrefix: streamConfig.urlPrefix },
+      now: { ...current, offsetMs: resolved.offsetMs, remainingMs: resolved.remainingMs, progress: resolved.progress },
+      next: upcoming.slice(0, 12).map((i) => programView(i, opts)),
+      stream: { mode: cfg.stream.mode, urlPrefix: cfg.stream.urlPrefix },
     });
   }
 
   function apiSchedule(url, res) {
-    const channelId = url.searchParams.get('channel') || config.channels[0].id;
+    const cfg = state.config;
+    const channelId = url.searchParams.get('channel') || cfg.channels[0].id;
     const tl = getTimeline(channelId);
     let from;
     let to;
@@ -161,7 +215,7 @@ export function createApp(config) {
       const [y, m, d] = date.split('-').map(Number);
       if (!y || !m || !d) throw new HttpError(400, 'date 参数格式应为 YYYY-MM-DD');
       const dayIdx = Math.floor(Date.UTC(y, m - 1, d) / 86400000);
-      from = dayStartMs(dayIdx, config.timezone);
+      from = dayStartMs(dayIdx, cfg.timezone);
       to = from + 86400000;
     } else {
       from = url.searchParams.has('from') ? toMs(url.searchParams.get('from')) : Date.now();
@@ -173,17 +227,12 @@ export function createApp(config) {
     const items = tl.schedule(from, to, limit);
     return json(res, {
       serverTime: Date.now(),
-      timezone: config.timezone,
+      timezone: cfg.timezone,
       channel: { id: tl.channel.id, name: tl.channel.name },
       from,
       to,
       count: items.length,
-      items: items.map((i) =>
-        programView(i, {
-          preferDirect: url.searchParams.get('mode') === 'direct',
-          prefix: url.searchParams.get('prefix') || null,
-        }),
-      ),
+      items: items.map((i) => programView(i, { preferDirect: url.searchParams.get('mode') === 'direct' })),
     });
   }
 
@@ -193,35 +242,27 @@ export function createApp(config) {
     const durationMs = Number(body.durationMs);
     if (!fileId || !Number.isFinite(durationMs)) throw new HttpError(400, '需要 fileId 与 durationMs');
     if (durationMs < 30 * 1000 || durationMs > 12 * 3600 * 1000) throw new HttpError(400, 'durationMs 超出合理范围');
-    const ep = library.getEpisode(fileId);
+    const ep = state.library.getEpisode(fileId);
     if (!ep) throw new HttpError(404, `未知 fileId：${fileId}`);
-    const suspiciousSource = /estimate|series-median|unknown/.test(ep.durationSource || '');
+    const suspicious = /estimate|series-median|unknown/.test(ep.durationSource || '');
     const ratio = ep.durationMs > 0 ? durationMs / ep.durationMs : 1;
-    // 索引时长来自容器解析时，只在 0.6x ~ 1.4x 内接受客户端回写，避免被异常播放器带偏时间轴
-    if (!suspiciousSource && (ratio < 0.6 || ratio > 1.4)) {
-      return json(res, {
-        ok: false,
-        ignored: true,
-        reason: 'outlier',
-        durationMs: ep.durationMs,
-        reported: Math.round(durationMs),
-        note: '客户端上报时长与容器解析值差异过大，已忽略',
-      });
+    if (!suspicious && (ratio < 0.6 || ratio > 1.4)) {
+      return json(res, { ok: false, ignored: true, reason: 'outlier', durationMs: ep.durationMs, reported: Math.round(durationMs) });
     }
     const diff = Math.abs(ep.durationMs - durationMs);
     ep.durationMs = Math.round(durationMs);
     ep.durationSource = 'client';
-    const cache = new DurationCache(config.paths.durations);
+    const cache = new DurationCache(state.config.paths.durations);
     cache.set(ep.relPath, ep.size, { ms: ep.durationMs, source: 'client', container: ep.container });
     cache.save(true);
-    if (diff > 3000) timelines.clear(); // 时长变化较大时重建时间轴
+    if (diff > 3000) state.timelines.clear();
     return json(res, { ok: true, fileId, durationMs: ep.durationMs, corrected: diff > 1000, invalidated: diff > 3000 });
   }
 
   function apiLibrary(url, res) {
     const q = (url.searchParams.get('q') || '').trim().toLowerCase();
     const limit = Math.min(500, Math.max(1, Number(url.searchParams.get('limit')) || 500));
-    const list = library.series
+    const list = state.library.series
       .filter((s) => !q || s.displayName.toLowerCase().includes(q) || s.name.toLowerCase().includes(q))
       .slice(0, limit)
       .map((s) => ({
@@ -233,30 +274,432 @@ export function createApp(config) {
         durationMs: s.episodes.reduce((a, e) => a + e.durationMs, 0),
         size: s.episodes.reduce((a, e) => a + e.size, 0),
       }));
-    return json(res, { total: library.series.length, matches: list.length, series: list });
+    return json(res, { total: state.library.series.length, matches: list.length, series: list });
   }
 
   function apiStream(req, res, url, fileId) {
-    const ep = library.getEpisode(fileId);
+    if (!configured()) throw new HttpError(503, '还没有配置 WebDAV');
+    const cfg = state.config;
+    const ep = state.library.getEpisode(fileId);
     if (!ep) throw new HttpError(404, `未知文件：${fileId}`);
-    if (streamConfig.mode === 'proxy') {
-      return proxyFile(req, res, { dav, relPath: ep.relPath, extraHeaders: streamConfig.headers }).catch((err) => {
+    if (cfg.stream.mode === 'proxy') {
+      return proxyFile(req, res, { dav: state.dav, relPath: ep.relPath, extraHeaders: cfg.stream.headers }).catch((err) => {
         if (!res.headersSent) json(res, { error: err.message }, 502);
         else res.destroy();
       });
     }
     const location = buildFileUrl({
-      prefix: url.searchParams.get('prefix') || streamConfig.urlPrefix,
+      prefix: url.searchParams.get('prefix') || cfg.stream.urlPrefix || cfg.webdav.baseUrl,
       relPath: ep.relPath,
-      root: config.webdav.root,
-      token: streamConfig.token,
-      embedCredentials: streamConfig.embedCredentials,
-      dav,
+      root: cfg.webdav.root,
+      token: cfg.stream.token,
+      embedCredentials: cfg.stream.embedCredentials,
+      dav: state.dav,
     });
     return sendRedirect(res, location);
   }
 
-  /* ---------------------------- 路由 ---------------------------- */
+  /* ------------------------- 管理 API ------------------------- */
+
+  function adminState() {
+    const cfg = state.config;
+    const lib = state.library;
+    const totalMs = lib.episodes.reduce((a, e) => a + e.durationMs, 0);
+    return {
+      serverTime: Date.now(),
+      ready: lib.episodes.length > 0 && configured(),
+      configured: configured(),
+      version: 1,
+      config: {
+        webdav: {
+          baseUrl: cfg.webdav.baseUrl,
+          root: cfg.webdav.root,
+          username: cfg.webdav.username,
+          passwordSet: Boolean(cfg.webdav.password),
+          timeoutMs: cfg.webdav.timeoutMs,
+        },
+        stream: {
+          mode: cfg.stream.mode,
+          urlPrefix: cfg.stream.urlPrefix,
+          tokenSet: Boolean(cfg.stream.token),
+          embedCredentials: cfg.stream.embedCredentials,
+        },
+        timezone: cfg.timezone,
+        tmdb: { language: cfg.tmdb.language, enabled: state.tmdb.enabled, mode: state.tmdb.mode, lastError: state.tmdb.lastError },
+        paths: { library: cfg.paths.library, settings: state.settingsFile },
+        library: { fallbackDurationMs: cfg.library.fallbackDurationMs },
+      },
+      settings: publicSettings(state.settings),
+      defaults: publicSettings(settingsFromConfig(cfg)),
+      channels: cfg.channels.map((ch) => {
+        const summary = channelSummary(ch);
+        return {
+          id: ch.id,
+          name: ch.name,
+          description: ch.description || '',
+          mode: ch.mode,
+          anchor: new Date(ch.anchorMs).toISOString(),
+          program: ch.program,
+          stats: summary.stats,
+          error: summary.error,
+        };
+      }),
+      selection: normalizeSelection(cfg.selection),
+      library: {
+        series: lib.series.length,
+        episodes: lib.episodes.length,
+        totalDurationMs: totalMs,
+        totalSize: lib.episodes.reduce((a, e) => a + e.size, 0),
+        scannedAt: lib.stats?.generatedAt || (fs.existsSync(cfg.paths.library) ? fs.statSync(cfg.paths.library).mtime.toISOString() : null),
+        loaded: lib.episodes.length > 0,
+        error: state.error,
+      },
+      scan: state.scan,
+      ruleTypes: RULE_TYPES,
+      tmdb: { enabled: state.tmdb.enabled, mode: state.tmdb.mode, lastError: state.tmdb.lastError },
+    };
+  }
+
+  async function apiAdminSave(req, res) {
+    const body = await readJson(req);
+    const incoming = body.settings || body;
+    try {
+      validateSettings(incoming, { baseConfig: state.baseConfig, timezone: state.config.timezone });
+    } catch (err) {
+      throw new HttpError(400, err.message);
+    }
+    if (body.dryRun) return json(res, { ok: true, dryRun: true, valid: true });
+
+    const cur = state.settings;
+    const next = { ...cur, ...incoming };
+
+    // 空密码 / 空 key 表示「保持不变」
+    next.webdav = { ...(cur.webdav || {}), ...(incoming.webdav || {}) };
+    if (!incoming.webdav?.password) {
+      const keep = cur.webdav?.password || state.config.webdav.password;
+      if (keep) next.webdav.password = keep;
+      else delete next.webdav.password;
+    }
+    if (incoming.tmdb) {
+      next.tmdb = { ...(cur.tmdb || {}), ...incoming.tmdb };
+      if (!incoming.tmdb.apiKey) {
+        if (cur.tmdb?.apiKey) next.tmdb.apiKey = cur.tmdb.apiKey;
+        else delete next.tmdb.apiKey;
+      }
+      if (!incoming.tmdb.readToken) {
+        if (cur.tmdb?.readToken) next.tmdb.readToken = cur.tmdb.readToken;
+        else delete next.tmdb.readToken;
+      }
+    }
+    if (incoming.stream && !incoming.stream.token) {
+      const keep = cur.stream?.token;
+      if (keep) next.stream = { ...(next.stream || {}), token: keep };
+    }
+    if (incoming.channels) next.channels = incoming.channels;
+
+    const before = state.config.webdav;
+    saveSettings(state.settingsFile, next);
+    rebuild();
+    const after = state.config.webdav;
+    const endpointChanged =
+      before.baseUrl !== after.baseUrl || before.root !== after.root || before.username !== after.username || before.password !== after.password;
+    const needsScan = endpointChanged || !fs.existsSync(state.config.paths.library);
+
+    return json(res, { ok: true, endpointChanged, needsScan, state: adminState() });
+  }
+
+  async function apiAdminScan(req, res) {
+    const body = await readJson(req).catch(() => ({}));
+    if (state.scan.running) throw new HttpError(409, '已有扫描任务在进行');
+    if (!configured()) throw new HttpError(400, '请先在「配置」里填写 WebDAV 地址');
+    runScan({ probe: body.probe !== false }).catch(() => {});
+    return json(res, { ok: true, started: true, scan: state.scan });
+  }
+
+  async function runScan({ probe = true } = {}) {
+    const cfg = state.config;
+    Object.assign(state.scan, {
+      running: true,
+      stage: 'start',
+      done: 0,
+      total: 0,
+      extra: '连接 WebDAV…',
+      startedAt: Date.now(),
+      finishedAt: null,
+      error: null,
+    });
+    try {
+      const data = await scanLibrary({
+        dav: state.dav,
+        rootRel: cfg.webdav.root || '',
+        durationsPath: cfg.paths.durations,
+        concurrency: 8,
+        probe,
+        fallbackDurationMs: cfg.library.fallbackDurationMs,
+        onProgress: (stage, done, total, extra) => {
+          state.scan.stage = stage;
+          state.scan.done = done;
+          state.scan.total = total;
+          state.scan.extra = extra || '';
+        },
+      });
+      const tmp = `${cfg.paths.library}.tmp`;
+      fs.mkdirSync(path.dirname(cfg.paths.library), { recursive: true });
+      fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
+      fs.renameSync(tmp, cfg.paths.library);
+      state.library = Library.load(cfg.paths.library);
+      state.timelines.clear();
+      state.scan.running = false;
+      state.scan.finishedAt = Date.now();
+      state.scan.stage = 'done';
+      state.scan.extra = `完成：${data.stats.series} 部 / ${data.stats.episodes} 集`;
+      persistSettings({
+        lastScan: { at: new Date().toISOString(), series: data.stats.series, episodes: data.stats.episodes },
+      });
+      return data.stats;
+    } catch (err) {
+      state.scan.running = false;
+      state.scan.finishedAt = Date.now();
+      state.scan.error = err.message;
+      throw err;
+    }
+  }
+
+  function apiAdminPreview(body) {
+    const draft = body && typeof body === 'object' ? body : {};
+    const settingsDraft = { ...state.settings, ...(draft.settings || {}) };
+    if (draft.channels) settingsDraft.channels = draft.channels;
+    if (draft.selection) settingsDraft.selection = draft.selection;
+
+    const merged = applySettings(state.baseConfig, settingsDraft);
+    merged.channels = (merged.channels || []).map((ch) => withSelection(ch, merged.selection));
+    let cfg;
+    try {
+      cfg = finalizeConfig(merged, state.baseConfig.__root, { allowIncomplete: true });
+    } catch (err) {
+      throw new HttpError(400, `编排无效：${err.message}`);
+    }
+    const channelId = draft.channel || cfg.channels[0]?.id;
+    const def = cfg.channels.find((c) => c.id === channelId);
+    if (!def) throw new HttpError(404, `频道不存在：${channelId}`);
+    if (!state.library.episodes.length) throw new HttpError(503, '还没有扫描过媒体库');
+
+    const hours = clamp(Number(draft.hours) || 12, 1, 72);
+    const at = draft.at ? toMs(draft.at) : Date.now();
+    let tl;
+    try {
+      tl = new ChannelTimeline({ channel: def, library: state.library, tz: cfg.timezone });
+      const stats = tl.stats();
+      const resolved = tl.resolve(at);
+      const items = tl.schedule(at, at + hours * 3600_000, 300);
+      return {
+        ok: true,
+        channel: { id: def.id, name: def.name, mode: def.mode },
+        timezone: cfg.timezone,
+        at,
+        hours,
+        stats,
+        now: {
+          startsAt: resolved.startsAt,
+          endsAt: resolved.endsAt,
+          durationMs: resolved.durationMs,
+          offsetMs: resolved.offsetMs,
+          progress: resolved.progress,
+          segmentLabel: resolved.segmentLabel,
+          episode: episodeView(resolved.episode),
+          startText: clockText(resolved.startsAt),
+          endText: clockText(resolved.endsAt),
+        },
+        items: items.map((i) => ({
+          ...episodeView(i.episode),
+          startsAt: i.startsAt,
+          endsAt: i.endsAt,
+          durationMs: i.durationMs,
+          truncated: Boolean(i.truncated),
+          segmentLabel: i.segmentLabel || null,
+          startText: clockText(i.startsAt),
+          endText: clockText(i.endsAt),
+        })),
+      };
+    } catch (err) {
+      throw new HttpError(400, `预览失败：${err.message}`);
+    }
+  }
+
+  async function resolveTmdb(series) {
+    if (!series) return null;
+    const cacheKey = series.id;
+    if (state.tmdbResolved.has(cacheKey)) return state.tmdbResolved.get(cacheKey);
+    let out = { source: state.tmdb.enabled ? 'none' : 'disabled' };
+
+    const override = state.settings.tmdbMatches?.[series.id];
+    const knownId = override || series.tmdbId;
+    if (knownId) {
+      const details = await state.tmdb.tvDetails(knownId).catch(() => null);
+      if (details) {
+        out = { ...details, source: override ? 'manual' : 'tag', score: 1 };
+      }
+    }
+    if (out.source === 'none' || out.source === 'disabled') {
+      if (state.tmdb.enabled) {
+        const match = await state.tmdb.matchSeries(series.displayName || series.name).catch((err) => ({ status: 'error', error: err.message }));
+        if (match.status === 'matched') {
+          out = { ...match.best, source: 'auto', score: match.best.score };
+        } else if (match.status === 'low-confidence') {
+          out = { ...match.best, source: 'low-confidence', score: match.best.score, candidates: match.candidates?.slice(0, 4) };
+        } else if (match.status === 'error') {
+          out = { source: 'error', error: match.error };
+        }
+      }
+    }
+    state.tmdbResolved.set(cacheKey, out);
+    return out;
+  }
+
+  async function apiAdminPosters(url, res) {
+    const ids = String(url.searchParams.get('ids') || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .slice(0, 24);
+    const posters = {};
+    await mapLimit(ids, 3, async (id) => {
+      const series = state.library.seriesById.get(id);
+      if (!series) return;
+      const info = await resolveTmdb(series);
+      posters[id] = info
+        ? {
+            tmdbId: info.id || null,
+            poster: info.poster || null,
+            name: info.name || null,
+            originalName: info.originalName || null,
+            year: info.year || null,
+            vote: info.vote || 0,
+            overview: info.overview || '',
+            source: info.source,
+            score: info.score ?? null,
+          }
+        : null;
+    });
+    if (state.tmdb.dirty) state.tmdb.save();
+    return json(res, { posters, tmdb: { enabled: state.tmdb.enabled, mode: state.tmdb.mode } });
+  }
+
+  async function apiAdminSeriesList(url, res) {
+    const q = (url.searchParams.get('q') || '').trim();
+    const limit = Math.min(500, Math.max(1, Number(url.searchParams.get('limit')) || 500));
+    const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
+    const sel = normalizeSelection(state.config.selection);
+    const selected = new Set(sel.series);
+    const all = state.library.series;
+    const filtered = q ? all.filter((s) => s.displayName.toLowerCase().includes(q.toLowerCase())) : all;
+    const page = filtered.slice(offset, offset + limit).map((s) => ({
+      id: s.id,
+      name: s.displayName,
+      tmdbId: s.tmdbId,
+      episodes: s.episodes.length,
+      seasons: [...new Set(s.episodes.map((e) => e.season))].sort((a, b) => a - b),
+      durationMs: s.episodes.reduce((a, e) => a + e.durationMs, 0),
+      size: s.episodes.reduce((a, e) => a + e.size, 0),
+      selected: sel.mode === 'include' ? selected.has(s.id) : true,
+    }));
+    return json(res, {
+      total: all.length,
+      matches: filtered.length,
+      offset,
+      limit,
+      selection: sel,
+      selectedCount: sel.mode === 'include' ? sel.series.length : all.length,
+      series: page,
+    });
+  }
+
+  async function apiAdminSeriesDetail(url, res, seriesId) {
+    const series = state.library.seriesById.get(decodeURIComponent(seriesId));
+    if (!series) throw new HttpError(404, '系列不存在');
+    const tmdb = await resolveTmdb(series);
+    const seasons = [...new Set(series.episodes.map((e) => e.season))].sort((a, b) => a - b);
+    let tmdbEpisodes = {};
+    if (state.tmdb.enabled && tmdb?.id) {
+      for (const season of seasons.slice(0, 4)) {
+        try {
+          const eps = await state.tmdb.seasonEpisodes(tmdb.id, season);
+          for (const e of eps) tmdbEpisodes[`${season}-${e.episode}`] = e;
+        } catch {
+          /* 单季失败忽略 */
+        }
+      }
+    }
+    if (state.tmdb.dirty) state.tmdb.save();
+    return json(res, {
+      series: {
+        id: series.id,
+        name: series.displayName,
+        tmdbId: series.tmdbId,
+        episodes: series.episodes.length,
+        seasons,
+      },
+      tmdb,
+      tmdbEnabled: state.tmdb.enabled,
+      episodes: series.__full.map((ep) => ({
+        ...episodeView(ep),
+        tmdb: tmdbEpisodes[`${ep.season}-${ep.episode}`] || null,
+      })),
+    });
+  }
+
+  async function apiAdminTmdbSearch(url, res) {
+    const q = String(url.searchParams.get('q') || '').trim();
+    if (!q) throw new HttpError(400, '缺少查询词');
+    if (!state.tmdb.enabled) throw new HttpError(400, '还没有配置 TMDB API Key');
+    const results = await state.tmdb.searchTv(q);
+    if (state.tmdb.dirty) state.tmdb.save();
+    return json(res, { query: q, results });
+  }
+
+  async function apiAdminTmdbTest(req, res) {
+    const body = await readJson(req).catch(() => ({}));
+    const apiKey = body.apiKey || state.config.tmdb.apiKey;
+    const readToken = body.readToken || state.config.tmdb.readToken;
+    const client = new TmdbClient({ apiKey, readToken, language: state.config.tmdb.language });
+    const result = await client.test();
+    return json(res, result);
+  }
+
+  async function apiAdminSetMatch(req, res, seriesId) {
+    const body = await readJson(req);
+    const id = decodeURIComponent(seriesId);
+    const series = state.library.seriesById.get(id);
+    if (!series) throw new HttpError(404, '系列不存在');
+    const matches = { ...(state.settings.tmdbMatches || {}) };
+    const tmdbId = Number(body.tmdbId);
+    if (!tmdbId) delete matches[id];
+    else {
+      const details = await state.tmdb.tvDetails(tmdbId);
+      if (!details) throw new HttpError(400, 'TMDB 上找不到该 ID');
+      matches[id] = tmdbId;
+    }
+    persistSettings({ tmdbMatches: matches });
+    state.tmdbResolved.delete(id);
+    return json(res, { ok: true, tmdbId: tmdbId || null });
+  }
+
+  /* ------------------------- 路由 ------------------------- */
+
+  const adminPassword = process.env.ADMIN_PASSWORD || '';
+
+  function adminAuthorized(req, res) {
+    if (!adminPassword) return true;
+    const header = req.headers.authorization || '';
+    if (header.startsWith('Basic ')) {
+      const [user, pass] = Buffer.from(header.slice(6), 'base64').toString('utf8').split(':');
+      if (pass === adminPassword) return true;
+      void user;
+    }
+    res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="anime-rotator admin"', 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('需要管理员密码');
+    return false;
+  }
 
   const server = http.createServer(async (req, res) => {
     const started = Date.now();
@@ -268,39 +711,53 @@ export function createApp(config) {
       return;
     }
     const pathname = decodeURIComponent(url.pathname);
+    const isAdmin = pathname === '/admin' || pathname.startsWith('/admin/') || pathname.startsWith('/api/admin/');
 
     try {
       if (req.method === 'OPTIONS') {
         res.writeHead(204, {
           'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'GET,HEAD,POST,OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type,Range',
+          'Access-Control-Allow-Methods': 'GET,HEAD,POST,PUT,DELETE,OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type,Range,Authorization',
           'Access-Control-Max-Age': '86400',
         });
         return res.end();
       }
 
+      if (isAdmin && !adminAuthorized(req, res)) return;
+
+      /* ---- 公共接口 ---- */
       if (pathname === '/api/health') {
         return json(res, {
           ok: true,
+          ready: state.library.episodes.length > 0 && configured(),
+          configured: configured(),
           serverTime: Date.now(),
-          library: { series: library.series.length, episodes: library.episodes.length, generatedAt: library.stats?.generatedAt || null, stats: library.stats },
-          channels: config.channels.map((c) => c.id),
+          library: {
+            series: state.library.series.length,
+            episodes: state.library.episodes.length,
+            generatedAt: state.library.stats?.generatedAt || null,
+            stats: state.library.stats,
+          },
+          channels: state.config.channels.map((c) => c.id),
+          scan: { running: state.scan.running, stage: state.scan.stage, done: state.scan.done, total: state.scan.total },
+          tmdb: { enabled: state.tmdb.enabled },
         });
       }
 
       if (pathname === '/api/config') {
         return json(res, {
           serverTime: Date.now(),
-          timezone: config.timezone,
-          stream: { mode: streamConfig.mode, urlPrefix: streamConfig.urlPrefix },
-          channels: config.channels.map((c) => ({ id: c.id, name: c.name, description: c.description, mode: c.mode })),
-          library: { series: library.series.length, episodes: library.episodes.length },
+          timezone: state.config.timezone,
+          stream: { mode: state.config.stream.mode, urlPrefix: state.config.stream.urlPrefix },
+          channels: state.config.channels.map((c) => ({ id: c.id, name: c.name, description: c.description, mode: c.mode })),
+          library: { series: state.library.series.length, episodes: state.library.episodes.length },
+          ready: state.library.episodes.length > 0 && configured(),
         });
       }
 
       if (pathname === '/api/channels') {
-        return json(res, { channels: config.channels.map(channelSummary) });
+        return json(res, { channels: state.config.channels.map(channelSummary) });
       }
 
       if (pathname === '/api/now') return apiNow(url, res);
@@ -309,23 +766,48 @@ export function createApp(config) {
       if (pathname === '/api/report-duration' && req.method === 'POST') return await apiReportDuration(req, res);
 
       if (pathname === '/api/reload' && req.method === 'POST') {
-        if (!fs.existsSync(config.paths.library)) throw new HttpError(409, '索引文件不存在，请先执行 scan');
-        library.reload(config.paths.library);
-        timelines.clear();
-        return json(res, { ok: true, series: library.series.length, episodes: library.episodes.length });
+        if (!fs.existsSync(state.config.paths.library)) throw new HttpError(409, '索引文件不存在，请先执行扫描');
+        state.library = Library.load(state.config.paths.library);
+        state.timelines.clear();
+        return json(res, { ok: true, series: state.library.series.length, episodes: state.library.episodes.length });
       }
 
+      /* ---- 管理接口 ---- */
+      if (pathname === '/api/admin/state') return json(res, adminState());
+      if (pathname === '/api/admin/settings' && (req.method === 'PUT' || req.method === 'POST')) return await apiAdminSave(req, res);
+      if (pathname === '/api/admin/scan' && req.method === 'POST') return await apiAdminScan(req, res);
+      if (pathname === '/api/admin/preview' && req.method === 'POST') return json(res, apiAdminPreview(await readJson(req)));
+      if (pathname === '/api/admin/series') return await apiAdminSeriesList(url, res);
+      if (pathname === '/api/admin/posters') return await apiAdminPosters(url, res);
+      if (pathname.startsWith('/api/admin/series/')) {
+        const rest = pathname.slice('/api/admin/series/'.length);
+        if (rest.endsWith('/tmdb') && req.method === 'POST') {
+          return await apiAdminSetMatch(req, res, rest.slice(0, -'/tmdb'.length));
+        }
+        if (req.method === 'GET') return await apiAdminSeriesDetail(url, res, rest);
+      }
+      if (pathname === '/api/admin/tmdb/search') return await apiAdminTmdbSearch(url, res);
+      if (pathname === '/api/admin/tmdb/test' && req.method === 'POST') return await apiAdminTmdbTest(req, res);
+
+      /* ---- 视频流 ---- */
       if (pathname.startsWith('/stream/')) {
-        const fileId = pathname.slice('/stream/'.length);
-        return apiStream(req, res, url, fileId);
+        return apiStream(req, res, url, pathname.slice('/stream/'.length));
       }
 
       if (pathname.startsWith('/api/')) throw new HttpError(404, `未知接口：${pathname}`);
 
-      return serveStatic(res, config.server.publicDir, pathname);
+      /* ---- 静态资源 ---- */
+      if (pathname === '/admin') {
+        res.writeHead(302, { Location: '/admin/' });
+        return res.end();
+      }
+      if (pathname === '/admin/' || pathname.startsWith('/admin/')) {
+        return serveStatic(res, state.config.server.publicDir, '/admin.html');
+      }
+      return serveStatic(res, state.config.server.publicDir, pathname);
     } catch (err) {
       const status = err.status || 500;
-      if (status >= 500) console.error(`[${req.method} ${pathname}]`, err);
+      if (status >= 500 && !err.status) console.error(`[${req.method} ${pathname}]`, err);
       if (!res.headersSent) json(res, { error: err.message, status }, status);
       else res.destroy();
     } finally {
@@ -335,10 +817,10 @@ export function createApp(config) {
     }
   });
 
-  return { server, library, timelines, dav };
+  return { server, state, rebuild, runScan, getTimeline };
 }
 
-/* ---------------------------- 工具 ---------------------------- */
+/* ------------------------- 工具 ------------------------- */
 
 function json(res, data, status = 200) {
   const body = Buffer.from(JSON.stringify(data));
@@ -356,7 +838,7 @@ function readJson(req) {
     let data = '';
     req.on('data', (c) => {
       data += c;
-      if (data.length > 1e6) reject(new HttpError(413, '请求体过大'));
+      if (data.length > 4e6) reject(new HttpError(413, '请求体过大'));
     });
     req.on('end', () => {
       try {

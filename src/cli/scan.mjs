@@ -31,6 +31,12 @@ function parseArgs(argv) {
 
 const args = parseArgs(process.argv.slice(2));
 const config = loadConfig(args.config);
+if (!config.webdav.baseUrl) {
+  console.error('✗ 还没有配置 WebDAV 地址');
+  console.error('  可以运行 npm start 后在 /admin 里配置，或设置环境变量 WEBDAV_BASE_URL');
+  process.exit(1);
+}
+
 const dav = new WebDavClient(config.webdav);
 const rootRel = config.webdav.root || '';
 const outFile = args.out ? path.resolve(args.out) : config.paths.library;

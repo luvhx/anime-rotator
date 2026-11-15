@@ -1,10 +1,9 @@
-# 番剧轮播 · 预构建镜像部署
+# 番剧轮播 · 一条命令起飞
 #
-#   1) cp .env.example .env && vi .env     # 填 WebDAV 地址与账号
-#   2) docker compose up -d
-#   3) 打开 http://<宿主机>:8088/
+#   docker compose up -d
+#   打开 http://<宿主机>:8088/admin  →  填 WebDAV → 扫描 → 选片 → 编排
 #
-# 首次启动会自动扫描媒体库（大库可能几十分钟），进度见 docker compose logs -f
+# 不需要预先准备任何配置文件：配置保存在 ./data/settings.json（随数据卷持久化）。
 
 name: anime-rotator
 
@@ -17,30 +16,18 @@ services:
       - "${APP_PORT:-8088}:8088"
     environment:
       TZ: "${TZ:-Asia/Shanghai}"
-      TIMEZONE: "${TIMEZONE:-Asia/Shanghai}"
-      PORT: "8088"
-
-      # WebDAV 源
-      WEBDAV_BASE_URL: "${WEBDAV_BASE_URL}"
-      WEBDAV_ROOT: "${WEBDAV_ROOT:-动画}"
-      WEBDAV_USERNAME: "${WEBDAV_USERNAME}"
-      WEBDAV_PASSWORD: "${WEBDAV_PASSWORD}"
-      WEBDAV_TIMEOUT_MS: "${WEBDAV_TIMEOUT_MS:-30000}"
-
-      # 取流方式：proxy（后端带凭据转发，浏览器开箱可播）
-      #          redirect（302 直链，需 urlPrefix 免鉴权或前置注入鉴权的反代）
-      STREAM_MODE: "${STREAM_MODE:-proxy}"
-      STREAM_URL_PREFIX: "${STREAM_URL_PREFIX:-}"
-      STREAM_TOKEN: "${STREAM_TOKEN:-}"
-      STREAM_EMBED_CREDENTIALS: "${STREAM_EMBED_CREDENTIALS:-false}"
-
-      # auto=没有索引才扫描 / always=每次启动都扫 / never=只启动服务
-      SCAN_ON_START: "${SCAN_ON_START:-auto}"
+      # 以下都可在 /admin 界面里配置，通常不需要填。
+      # 想用环境变量注入（例如 GitOps / 自动化部署）时取消注释：
+      # WEBDAV_BASE_URL: "http://192.168.1.10:19798/dav/115/Media"
+      # WEBDAV_ROOT: "动画"
+      # WEBDAV_USERNAME: "user@example.com"
+      # WEBDAV_PASSWORD: "password"
+      # STREAM_MODE: "proxy"            # proxy | redirect
+      # STREAM_URL_PREFIX: "https://media.example.com/anime"
+      # SCAN_ON_START: "auto"           # auto | always | never
+      # ADMIN_PASSWORD: "changeme"      # 给 /admin 与 /api/admin 加 HTTP Basic 认证
     volumes:
-      # 索引与时长缓存（务必持久化，避免重启后重新扫描）
       - ./data:/app/data
-      # 想自定义频道编排时：cp config.compose.json config.json，再打开下面这行
-      # - ./config.json:/app/config.json:ro
     healthcheck:
       test:
         - CMD
@@ -56,32 +43,3 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-
-  # 可选：定时重扫索引（每天 04:00），新增番剧后自动进时间轴
-  rescan:
-    image: ${IMAGE:-ghcr.io/luvhx/anime-rotator:latest}
-    profiles: ["recurring"]
-    restart: unless-stopped
-    command:
-      - /bin/sh
-      - -c
-      - |
-        while true; do
-          sleep 86400
-          echo "[rescan] $(date -Iseconds) 重新扫描媒体库"
-          if node src/cli/scan.mjs; then
-            echo "[rescan] 通知主服务热加载索引"
-            wget -q -O- --post-data='' http://anime-rotator:8088/api/reload || echo "[rescan] 热加载失败，请重启主服务"
-          else
-            echo "[rescan] 扫描失败，等下一轮"
-          fi
-        done
-    environment:
-      TZ: "${TZ:-Asia/Shanghai}"
-      WEBDAV_BASE_URL: "${WEBDAV_BASE_URL}"
-      WEBDAV_ROOT: "${WEBDAV_ROOT:-动画}"
-      WEBDAV_USERNAME: "${WEBDAV_USERNAME}"
-      WEBDAV_PASSWORD: "${WEBDAV_PASSWORD}"
-      WEBDAV_TIMEOUT_MS: "${WEBDAV_TIMEOUT_MS:-30000}"
-    volumes:
-      - ./data:/app/data

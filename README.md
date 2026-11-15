@@ -33,21 +33,33 @@ WebDAV 媒体库 ──scan──> data/library.json（含每集真实时长）
 | 302 直链 | `/stream/<fileId>` 直接 302 到 WebDAV/CDN 地址，后端零带宽；也可切 `proxy` 模式由后端转发 |
 | 自定义 URL 前缀 | 前端读取视频文件的地址前缀可配置（CDN、反代、内网域名），支持逐请求覆盖 |
 | 前端自动同步 | 打开即在播，每秒校正漂移，可手动「重新同步」；播放器回写真实时长帮助索引自愈 |
+| Web 管理界面 | `/admin` 里改配置、勾选番剧、可视化编辑编排、实时预览节目单，改完即生效 |
+| TMDB 元数据 | 封面、简介、评分、播出日期与剧集标题，自动按中文名匹配，也可手动纠正 |
 
 ---
 
 ## 快速开始
 
+### 路线 A：Docker（推荐，两条命令）
+
 ```bash
-cp config.example.json config.json   # 填 WebDAV 地址与账号
-npm run scan                         # 扫描媒体库 + 解析时长（首次约 25 分钟 / 4000 集，之后走缓存）
-npm start                            # 启动，默认 http://127.0.0.1:8088
+docker compose up -d
+# 打开 http://<宿主机>:8088/admin → 填 WebDAV → 扫描 → 选片 → 编排
+```
+
+不用写任何配置文件，配置存在 `./data/settings.json`（随数据卷持久化）。
+
+### 路线 B：本地 Node（改代码 / 调试用）
+
+```bash
+cp config.example.json config.json   # 可选：也可以全部在 /admin 里填
+npm start                            # http://127.0.0.1:8088 ，打开 /admin 配置
+npm run scan                         # 也可以在终端里建索引（首次约 25 分钟 / 4000 集）
 ```
 
 > 本机实测（115 WebDAV / 158 部动画）：3993 集、1415 小时（约 59 天）、2.6 TB；时长 100% 由容器头解析（0 集估算）。首次扫描 1680 s，重扫 145 s。
 >
-> 默认 `stream.mode` 用 `proxy`（后端带凭据转发），保证浏览器开箱能播；WebDAV 免鉴权或前面挂了解析鉴权的反代时，改成 `redirect` 更省带宽：
-> `npm start -- --mode redirect --prefix https://media.example.com/anime`。
+> 默认 `stream.mode` 用 `proxy`（后端带凭据转发），保证浏览器开箱能播；WebDAV 免鉴权或前面挂了解析鉴权的反代时，改成 `redirect` 更省带宽（可在 /admin 里一键切换）。
 
 没有第三方依赖，Node.js ≥ 20 即可（用到内置 `fetch`）。
 
@@ -60,71 +72,130 @@ npm run plan -- --stats              # 查看各频道编排规模
 npm run plan -- --channel daily --date 2026-11-15    # 打印某天的节目单
 npm run plan -- --channel mix --at "2026-11-15T21:30:00+08:00" --hours 6
 npm start -- --port 9000
-npm run smoke                        # 接口 + 前端链路自检（服务需已启动）
+npm run smoke                        # 接口 + 前端 + 管理界面自检（服务需已启动）
 npm test                             # 编排引擎自检（不联网，CI 同款）
 ```
 
 ---
 
-## Docker 部署（预构建镜像）
+## 管理界面（/admin）
+
+浏览器打开 `http://<宿主机>:8088/admin`，五个标签页覆盖完整配置流程。
+
+### 概览
+
+库规模、频道数、参与编排的番剧数、TMDB 状态；「现在在播」实时预览；扫描入口（可选是否解析时长）与进度条。
+
+### 配置
+
+| 分组 | 内容 |
+| --- | --- |
+| WebDAV 源 | 地址、根目录、账号、密码、超时 |
+| 取流方式 | `proxy`（后端转发）/ `redirect`（302 直链）、URL 前缀、鉴权 Token、直链内嵌凭据 |
+| 时区 / TMDB | 编排时区、TMDB 语言、API Key（v3）或 Read Token（v4），带「测试连接」 |
+
+密码与 Key 保存后不会回显（接口只返回 `passwordSet: true`），留空表示不修改。
+
+### 番剧库
+
+按封面网格展示全库，勾选决定「哪些番剧参与编排」：
+
+- 默认「全部参与」，取消勾选任意一部即切换为「只播勾选的」；
+- 支持搜索、全选、清空、选中当前筛选结果；
+- 封面 / 评分 / 原名来自 TMDB，滚动到可视区域才按批拉取（一次 24 部），带磁盘缓存。
+
+### 编排
+
+左侧频道列表，右侧编辑器：
+
+- 频道名称、模式（`loop` 循环 / `daily` 按日）、锚点时间；
+- 编排段可视化编辑：规则类型、段长度（集数 / 小时 / 分钟 / 填满当天 / 播完一轮）、段名；
+- `daypart` 支持逐时段配置子规则（可跨零点，如 22:00 → 06:00）；
+- 一键套用模板：整库连播 / 随机+轮播 / 电视台日编排 / 每日一部；
+- 新建、删除、上下移动段落与频道。
+
+### 预览
+
+选频道 + 时间窗口（6/12/24/48 小时），用**当前未保存的草稿**实时试算节目单，确认无误再保存。
+
+> 所有改动点「保存」后立即生效：时间轴重建，播放器下次轮询（≤10s）自动切到新编排，无需重启服务。
+
+### 访问控制
+
+`/admin` 与 `/api/admin/*` 默认无鉴权（家庭内网够用）。要加一层 HTTP Basic：
+
+```yaml
+environment:
+  ADMIN_PASSWORD: "你的密码"
+```
+
+### TMDB 配置
+
+1. 到 [themoviedb.org](https://www.themoviedb.org/settings/api) 免费申请 API Key（v3）或 Read Token（v4）；
+2. 填进 `配置 → TMDB`，点「测试连接」；
+3. 打开「番剧库」，封面会按中文名自动匹配（相似度 ≥ 0.55 才算命中），卡片角标显示来源；
+4. 匹配错了可以手动指定 TMDB ID：`POST /api/admin/series/:id/tmdb`，body `{"tmdbId": 12345}`。
+
+没配 TMDB 也能正常播，只是没有封面与简介。
+
+---
+
+## Docker 部署
 
 镜像：`ghcr.io/luvhx/anime-rotator`（`latest` / `1.0.0` / `main`，linux/amd64 + linux/arm64，压缩后约 59 MB，零依赖，**公开可匿名拉取**）
 
-### 三步启动
+### 两条命令
 
 ```bash
 git clone https://github.com/luvhx/anime-rotator.git && cd anime-rotator
-cp .env.example .env        # 填 WEBDAV_BASE_URL / WEBDAV_USERNAME / WEBDAV_PASSWORD
 docker compose up -d
 ```
 
-打开 `http://<宿主机>:8088/`。
+打开 `http://<宿主机>:8088/admin`，在界面里填 WebDAV、扫描、选片、编排。**不需要 `.env`，也不需要预先准备 config.json。**
 
-首次启动没有索引时会自动扫描（`SCAN_ON_START=auto`），大库可能几十分钟：
+首屏会提示「未配置」，跟着引导走即可：
 
-```bash
-docker compose logs -f                                   # 看扫描进度
-docker compose run --rm anime-rotator node src/cli/scan.mjs   # 单独跑一次扫描（不影响服务）
-docker compose restart anime-rotator                     # 扫完重启加载新索引
+1. 配置 → 填 `WebDAV 地址`（如 `http://192.168.1.10:19798/dav/115/Media`）、根目录（如 `动画`）、账号密码 → 保存；
+2. 概览 → 「开始扫描」（4000 集约 25 分钟，可先取消勾选「解析时长」快速建索引）；
+3. 番剧库 → 勾选要播的番剧（不勾 = 全部）；
+4. 编排 → 改频道规则或套模板；
+5. 预览 → 确认节目单，保存。
+
+索引与设置都落在宿主机 `./data/`：
+
+```
+data/
+├── library.json      # 媒体库索引
+├── durations.json    # 时长缓存
+├── tmdb-cache.json   # TMDB 查询缓存
+└── settings.json     # Web UI 保存的配置（含 WebDAV 密码，注意备份权限）
 ```
 
-索引与时长缓存落在宿主机 `./data/`（挂载卷），重启不会重扫。
+### 环境变量（可选）
 
-### 环境变量
+默认全走 Web UI。若想用环境变量注入（GitOps / 自动化部署），在 `docker-compose.yml` 里取消注释或写 `.env`：
 
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
 | `APP_PORT` | `8088` | 宿主机端口 |
-| `TZ` / `TIMEZONE` | `Asia/Shanghai` | 容器时区 / 编排时区 |
-| `WEBDAV_BASE_URL` | — | **必填**，如 `http://192.168.1.10:19798/dav/115/Media` |
-| `WEBDAV_ROOT` | `动画` | baseUrl 下的节目根目录 |
-| `WEBDAV_USERNAME` / `WEBDAV_PASSWORD` | — | WebDAV 账号 |
-| `STREAM_MODE` | `proxy` | `proxy` 后端转发（开箱可播）/ `redirect` 302 直链 |
-| `STREAM_URL_PREFIX` | 跟随 baseUrl | 302 直链前缀，可指向 CDN / 反代 |
-| `STREAM_TOKEN` | 空 | 直链追加的鉴权串 |
-| `SCAN_ON_START` | `auto` | `auto` 没索引才扫 / `always` 每次启动都扫 / `never` 只起服务 |
-| `IMAGE` | 预构建镜像 | 换成自己的镜像地址 |
+| `TZ` | `Asia/Shanghai` | 容器时区 |
+| `WEBDAV_BASE_URL` | — | WebDAV 地址 |
+| `WEBDAV_ROOT` | — | 根目录 |
+| `WEBDAV_USERNAME` / `WEBDAV_PASSWORD` | — | 账号 |
+| `STREAM_MODE` | `proxy` | `proxy` / `redirect` |
+| `STREAM_URL_PREFIX` | 跟随 baseUrl | 302 直链前缀 |
+| `SCAN_ON_START` | `auto` | `auto` / `always` / `never` |
+| `ADMIN_PASSWORD` | 空 | 给 `/admin` 加 Basic 认证 |
 
-不想用环境变量注入，也可以把 `config.compose.json` 复制成 `config.json` 改好，再打开 compose 里的挂载行：
-
-```yaml
-volumes:
-  - ./data:/app/data
-  - ./config.json:/app/config.json:ro
-```
+> 环境变量只作为**初始值**：UI 保存后以 `data/settings.json` 为准。
 
 ### 定时重扫（新增番剧自动进时间轴）
 
 ```bash
-docker compose --profile recurring up -d     # 起一个每天重扫的 sidecar
+docker compose -f docker-compose.yml -f docker-compose.recurring.yml up -d
 ```
 
-sidecar 扫完会调用 `POST /api/reload` 让主服务热加载，不用重启；手动重扫后也可以这样刷新：
-
-```bash
-docker compose exec anime-rotator node src/cli/scan.mjs
-curl -X POST http://127.0.0.1:8088/api/reload
-```
+sidecar 每天重扫一次，扫完调用 `POST /api/reload` 热加载，不用重启主服务。
 
 ### 本地构建镜像
 
@@ -134,7 +205,7 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 
 ### 反向代理（可选）
 
-`proxy` 模式下浏览器只跟同源的回环地址通信，前面加一层 TSSL 即可：
+`proxy` 模式下浏览器只跟同源地址通信，前面加一层 TLS 即可：
 
 ```caddy
 anime.example.com {
@@ -142,7 +213,7 @@ anime.example.com {
 }
 ```
 
-若想用 `redirect` 直链又需要鉴权，让反代注入凭据并设置 `STREAM_URL_PREFIX` 指向它：
+若想用 `redirect` 直链又需要鉴权，让反代注入凭据并设置前缀指向它：
 
 ```nginx
 location /media/ {
@@ -154,20 +225,13 @@ location /media/ {
 }
 ```
 
-```bash
-STREAM_MODE=redirect
-STREAM_URL_PREFIX=https://anime.example.com/media
-```
+然后在 `/admin → 配置 → 取流方式` 里选 `302 直链`，前缀填 `https://anime.example.com/media`。
 
 ### CI / 镜像说明
 
-`.github/workflows/build.yml`：push 到 `main` 或打 `v*` tag 时，先跑语法检查 + 编排自检（`tools/selftest.mjs`，不联网），再构建 amd64/arm64 镜像推送到 GHCR。
+`.github/workflows/build.yml`：push 到 `main` 或打 `v*` tag 时，先跑语法检查 + 编排自检 + 冷启动冒烟，再构建 amd64/arm64 镜像推送到 GHCR。
 
-镜像当前是公开的（已验证匿名 `tags/list` 返回 200）。若你 fork 后自己发布，记得在仓库 **Packages → 该镜像 → Package settings** 里把可见性设为 public，否则 `docker compose` 拉取前需要 `docker login ghcr.io`：
-
-```bash
-echo "$GITHUB_TOKEN" | docker login ghcr.io -u <用户名> --password-stdin
-```
+镜像当前公开（已验证匿名拉取）。fork 后自行发布的话，记得在 **Packages → Package settings** 里把可见性设为 public，否则需要先 `docker login ghcr.io`。
 
 ---
 
@@ -343,6 +407,16 @@ if (Math.abs(video.currentTime - target) > 4) video.currentTime = target;  // �
 | POST | `/api/report-duration` | 前端回写真实时长 `{fileId, durationMs}`（异常值会被拒绝） |
 | POST | `/api/reload` | 重新加载 `library.json` 并重建时间轴（重扫后热更新，无需重启） |
 | GET | `/stream/<fileId>` | **302** 到直链，或（proxy 模式）转发视频字节流 |
+| GET | `/api/admin/state` | 管理界面初始状态（配置脱敏 + 库统计 + 扫描状态） |
+| PUT | `/api/admin/settings` | 保存设置（WebDAV / 取流 / 时区 / TMDB / 频道 / 选片），支持 `dryRun` 只校验 |
+| POST | `/api/admin/scan` | 触发扫描 `{probe?: true}`，进度见 `/api/admin/state` |
+| POST | `/api/admin/preview` | 用草稿编排试算节目单 `{channel, hours, settings?}` |
+| GET | `/api/admin/series` | 番剧库（分页/搜索，带选中状态） |
+| GET | `/api/admin/series/:id` | 单部详情（本地剧集 + TMDB 季/集信息） |
+| GET | `/api/admin/posters?ids=a,b` | 批量取 TMDB 封面（≤24 部，带缓存） |
+| GET | `/api/admin/tmdb/search?q=` | 手动匹配时搜索 TMDB |
+| POST | `/api/admin/tmdb/test` | 测试 TMDB Key 是否可用 |
+| POST | `/api/admin/series/:id/tmdb` | 手动指定 TMDB ID `{tmdbId}` |
 
 `/api/now` 响应节选：
 
@@ -420,38 +494,45 @@ location /media/ {
 
 ```
 番剧轮播/
-├── config.json                # 本地运行配置（含 WebDAV 账号，已 gitignore）
-├── config.example.json        # 配置模板
-├── config.compose.json        # 容器内默认配置（频道已内置，账号走环境变量）
-├── Dockerfile                 # 预构建镜像（node:22-alpine，零依赖）
-├── docker-compose.yml         # 预构建镜像部署
-├── docker-compose.build.yml   # 本地构建覆盖层
-├── docker-entrypoint.sh       # 首次启动自动扫描
-├── .env.example               # compose 环境变量模板
+├── config.json                 # 本地运行配置（含 WebDAV 账号，已 gitignore）
+├── config.example.json         # 配置模板
+├── config.compose.json         # 容器内默认配置（频道内置，账号由 UI/环境变量提供）
+├── Dockerfile                  # 预构建镜像（node:22-alpine，零依赖）
+├── docker-compose.yml          # 主 compose（零配置启动）
+├── docker-compose.recurring.yml# 可选：每天自动重扫
+├── docker-compose.build.yml    # 本地构建覆盖层
+├── docker-entrypoint.sh        # 入口：修权限 / 首次扫描 / 降权
+├── .env.example                # 可选环境变量模板
 ├── .github/workflows/build.yml # CI：自检 + 多架构镜像推送 GHCR
-├── data/
-│   ├── library.json           # 扫描产物：系列/季/集/时长
-│   └── durations.json         # 时长缓存（路径|大小 → 毫秒）
-├── public/                    # 前端（原生 JS，无构建）
+├── data/                       # 运行期数据（索引/时长缓存/TMDB 缓存/设置）
+├── public/                     # 前端（原生 JS，无构建）
 │   ├── index.html
-│   ├── app.js                 # 拉时间轴、换源、seek 同步、节目单渲染
-│   └── style.css
+│   ├── app.js                  # 播放器：拉时间轴、换源、seek 同步、节目单
+│   ├── style.css
+│   ├── admin.html              # 管理界面
+│   ├── admin.js                # 配置 / 番剧库 / 编排 / 预览
+│   └── admin.css
 ├── tools/
-│   ├── smoke-api.mjs          # 接口端到端检查
-│   ├── smoke-frontend.mjs     # 无浏览器前端冒烟（DOM 桩 + 真实 API）
-│   └── selftest.mjs           # 编排引擎自检（CI 用，不联网）
+│   ├── selftest.mjs            # 编排引擎自检（CI，不联网）
+│   ├── smoke-boot.mjs          # 冷启动冒烟（CI，不联网）
+│   ├── smoke-api.mjs           # 播放接口端到端
+│   ├── smoke-frontend.mjs      # 播放器 DOM 冒烟
+│   ├── smoke-admin.mjs         # 管理接口冒烟
+│   └── smoke-admin-ui.mjs      # 管理界面 DOM 冒烟
 └── src/
-    ├── webdav.mjs             # PROPFIND / Range GET 客户端
-    ├── probe.mjs              # MKV(EBML) / MP4(mvhd) 时长解析
-    ├── library.mjs            # 扫描、索引、时长缓存、库对象
-    ├── scheduler.mjs          # 编排规则 + 时间轴（loop / daily）
-    ├── stream.mjs             # 302 直链、前缀拼接、代理转发
-    ├── server.mjs             # 路由与 API
-    ├── config.mjs             # 配置加载与校验
+    ├── webdav.mjs              # PROPFIND / Range GET 客户端
+    ├── probe.mjs               # MKV(EBML) / MP4(mvhd) 时长解析
+    ├── library.mjs             # 扫描、索引、时长缓存、库对象
+    ├── scheduler.mjs           # 编排规则 + 时间轴（loop / daily）
+    ├── tmdb.mjs                # TMDB 客户端（搜索/详情/季集，带缓存与节流）
+    ├── settings.mjs            # 运行期设置：读写、校验、与配置合并
+    ├── stream.mjs              # 302 直链、前缀拼接、代理转发
+    ├── server.mjs              # 路由、公共 API、管理 API、扫描任务
+    ├── config.mjs              # 配置加载/校验/环境变量覆盖
     └── cli/
-        ├── scan.mjs           # 建索引
-        ├── plan.mjs           # 预览节目单
-        └── serve.mjs          # 启动服务
+        ├── scan.mjs            # 建索引
+        ├── plan.mjs            # 预览节目单
+        └── serve.mjs           # 启动服务
 ```
 
 ---
@@ -464,6 +545,9 @@ npm run smoke
 
 - `smoke-api`：时钟一致性（两次 /api/now 的 offset 增量 = 真实间隔）、节目单首尾相接、当天不超过 24:00、Range 返回 206 且是真实 MKV 字节、404 分支。
 - `smoke-frontend`：用最小 DOM 桩加载 `public/app.js`，验证「取时间轴 → 设置 src → seek 到直播位置 → 漂移重同步」。
+- `smoke-admin`：管理接口（状态脱敏、选片、预览、编排校验、非法输入拒绝、静态资源）。
+- `smoke-admin-ui`：DOM 桩加载 `public/admin.js`，验证「概览 → 番剧库 → 编排 → 预览」整条交互链路无运行时错误。
+- `npm test`：编排引擎自检 + 冷启动冒烟，两个都不联网，CI 同款。
 
 本机运行结果：15 项接口检查 + 11 项前端检查全部通过。
 
@@ -480,6 +564,14 @@ npm run smoke
 **前端回写时长会不会把时间轴搞乱？** 不会：索引里的时长来自容器解析时，只有落在 0.6x～1.4x 区间的回写才会被接受，超出范围（异常播放器、截断流）直接拒绝并返回 `{ignored:true, reason:"outlier"}`。
 
 **换机器/换端口后 302 地址不对？** 改 `stream.urlPrefix`（或 `stream.mode`），不用重新扫描。
+
+**配置存在哪？改了要重启吗？** 存在 `data/settings.json`（Web UI 保存的），优先级高于配置文件与环境变量。保存后立即生效：时间轴重建、播放器下一次轮询自动切换，不用重启。
+
+**不配 TMDB 能用吗？** 能。没有 Key 时只是没有封面/简介，编排、播放、节目单都正常。
+
+**第一次打开只有「未配置」？** 这是预期行为：现在支持零配置启动，去 `/admin` 填 WebDAV 即可；`docker compose up -d` 不需要任何环境变量。
+
+**怎么给 /admin 加密码？** 设置环境变量 `ADMIN_PASSWORD`，重启后 `/admin` 与 `/api/admin/*` 需要 HTTP Basic 认证。
 
 ---
 

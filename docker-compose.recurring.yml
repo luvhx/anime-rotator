@@ -1,0 +1,34 @@
+# 可选：每天自动重扫媒体库（新增番剧自动进时间轴）
+#
+#   docker compose -f docker-compose.yml -f docker-compose.recurring.yml up -d
+#
+# 扫完会调用主服务的 /api/reload 热加载索引，无需重启。
+
+services:
+  rescan:
+    image: ${IMAGE:-ghcr.io/luvhx/anime-rotator:latest}
+    container_name: anime-rotator-rescan
+    restart: unless-stopped
+    command:
+      - /bin/sh
+      - -c
+      - |
+        while true; do
+          sleep 86400
+          echo "[rescan] $(date -Iseconds) 重新扫描媒体库"
+          if node src/cli/scan.mjs; then
+            echo "[rescan] 通知主服务热加载索引"
+            wget -q -O- --post-data='' http://anime-rotator:8088/api/reload || echo "[rescan] 热加载失败，请重启主服务"
+          else
+            echo "[rescan] 扫描失败，等下一轮"
+          fi
+        done
+    environment:
+      TZ: "${TZ:-Asia/Shanghai}"
+    volumes:
+      - ./data:/app/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "2"

@@ -1,10 +1,8 @@
 node_modules/
-data/library.json
-data/library.json.tmp
-data/durations.json
-*.log
-.DS_Store
+data/
 config.json
 .env
 webdav-动画-目录清单.md
 webdav-动画-目录清单.json
+*.log
+.DS_Store

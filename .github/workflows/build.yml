@@ -37,6 +37,9 @@ jobs:
       - name: 编排引擎自检
         run: node tools/selftest.mjs
 
+      - name: 冷启动冒烟（未配置状态）
+        run: node tools/smoke-boot.mjs
+
   docker:
     name: 构建并推送镜像
     needs: test

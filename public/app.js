@@ -83,7 +83,11 @@ async function getNow() {
   }
   const res = await fetch(`/api/now?${q}`, { cache: 'no-store' });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  if (!res.ok) {
+    const err = new Error(data.error || `HTTP ${res.status}`);
+    err.setup = Boolean(data.setup);
+    throw err;
+  }
   return data;
 }
 
@@ -100,6 +104,10 @@ async function refreshNow(force = false) {
     hideError();
     applyNow(prevId);
   } catch (err) {
+    if (err.setup) {
+      showSetup();
+      return;
+    }
     state.errors++;
     showError(`无法连接后端：${err.message}（第 ${state.errors} 次，稍后自动重试）`);
     setStatus(`后端连接失败：${err.message}`);
@@ -321,11 +329,34 @@ async function loadConfig() {
       : '302 直链';
   $('tzLabel').textContent = state.tz;
   renderChannels();
+  if (data.ready === false) {
+    showSetup();
+    return false;
+  }
   if (data.library) {
     $('libraryInfo').textContent = `库内 ${data.library.series} 部 / ${data.library.episodes} 集 · 前缀 ${
       PREFIX_OVERRIDE || data.stream?.urlPrefix || ''
     }`;
   }
+  return true;
+}
+
+function showSetup() {
+  const overlay = $('overlay');
+  overlay.classList.remove('hidden');
+  overlay.innerHTML = '';
+  const link = document.createElement('a');
+  link.className = 'start-btn';
+  link.href = '/admin';
+  link.textContent = '⚙ 打开管理界面';
+  const p = document.createElement('p');
+  p.className = 'hint';
+  p.textContent = '还没有配置媒体库：在管理界面填写 WebDAV 地址、扫描并选择要播的番剧。';
+  overlay.append(link, p);
+  setStatus('未初始化：请先打开 /admin 完成配置');
+  $('seriesName').textContent = '尚未配置';
+  $('epLabel').textContent = '';
+  $('epTitle').textContent = '';
 }
 
 function renderChannels() {
@@ -443,7 +474,8 @@ document.addEventListener('visibilitychange', () => {
 
 (async function boot() {
   try {
-    await loadConfig();
+    const ready = await loadConfig();
+    if (ready === false) return;
     await refreshNow(true);
     setInterval(tick, 1000);
   } catch (err) {

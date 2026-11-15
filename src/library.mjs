@@ -419,6 +419,11 @@ export class Library {
     }
   }
 
+  /** 空库（首次启动、尚未扫描时使用） */
+  static empty() {
+    return new Library({ version: 1, series: [], stats: {} });
+  }
+
   static load(file) {
     const data = JSON.parse(fs.readFileSync(file, 'utf8'));
     return new Library(data);

@@ -473,3 +473,12 @@ body {
   color: var(--text);
   border-color: #33405c;
 }
+
+a.ghost.link {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+}
+.overlay .start-btn {
+  text-decoration: none;
+}

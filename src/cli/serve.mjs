@@ -32,12 +32,6 @@ function parseArgs(argv) {
 const args = parseArgs(process.argv.slice(2));
 const config = loadConfig(args.config);
 
-if (!fs.existsSync(config.paths.library)) {
-  console.error(`✗ 找不到节目库索引：${config.paths.library}`);
-  console.error('  请先运行: npm run scan');
-  process.exit(1);
-}
-
 // 命令行覆盖，便于临时切流模式 / 换 CDN 前缀
 if (args.mode) {
   if (!['redirect', 'proxy'].includes(args.mode)) {
@@ -52,27 +46,31 @@ if (args.token) config.stream.token = args.token;
 const port = args.port || config.server.port;
 const host = args.host || config.server.host;
 
-const { server, library, timelines } = createApp(config);
+const { server, state } = createApp(config);
 
 server.listen(port, host, () => {
-  const s = library.stats || {};
+  const lib = state.library;
+  const cfg = state.config;
   console.log('');
   console.log('  番剧轮播服务已启动');
-  console.log(`  ├ 前端   http://127.0.0.1:${port}/`);
-  console.log(`  ├ 接口   http://127.0.0.1:${port}/api/now?channel=${config.channels[0].id}`);
-  console.log(`  ├ 节目库 ${library.series.length} 部 / ${library.episodes.length} 集 / ${fmtDuration(s.totalDurationMs || 0)}`);
-  console.log(`  ├ 时区   ${config.timezone}`);
-  console.log(`  ├ 直链   ${config.stream.mode === 'redirect' ? '302 重定向' : '后端代理'} → ${config.stream.urlPrefix}`);
-  console.log(`  └ 频道   ${config.channels.map((c) => `${c.id}(${c.mode})`).join('  ')}`);
+  console.log(`  ├ 播放   http://127.0.0.1:${port}/`);
+  console.log(`  ├ 管理   http://127.0.0.1:${port}/admin`);
+  console.log(`  ├ 接口   http://127.0.0.1:${port}/api/now?channel=${cfg.channels[0].id}`);
+  console.log(`  ├ 节目库 ${lib.series.length} 部 / ${lib.episodes.length} 集${lib.episodes.length ? ' / ' + fmtDuration(lib.episodes.reduce((a, e) => a + e.durationMs, 0)) : '（还没扫描）'}`);
+  console.log(`  ├ 时区   ${cfg.timezone}`);
+  console.log(`  ├ 取流   ${cfg.stream.mode === 'redirect' ? '302 直链' : '后端代理'} → ${cfg.stream.urlPrefix || '(未配置)'}`);
+  console.log(`  └ 频道   ${cfg.channels.map((c) => `${c.id}(${c.mode})`).join('  ')}`);
+  if (!lib.episodes.length) {
+    console.log('');
+    console.log('  ⚠ 还没有媒体库索引：打开 /admin 填写 WebDAV 信息并点「开始扫描」');
+  }
   console.log('');
-  void timelines;
-
   // 直链模式下探测一次：目标是否要求鉴权（浏览器 <video> 不会自动带 Basic 凭据）
-  if (config.stream.mode === 'redirect') {
+  if (state.config.stream.mode === 'redirect' && state.config.webdav.baseUrl) {
     (async () => {
       try {
-        const probe = new WebDavClient({ ...config.webdav, username: '', password: '', retries: 0, timeoutMs: 6000 });
-        const res = await probe.open(config.webdav.root || '', { method: 'HEAD' });
+        const probe = new WebDavClient({ ...state.config.webdav, username: '', password: '', retries: 0, timeoutMs: 6000 });
+        const res = await probe.open(state.config.webdav.root || '', { method: 'HEAD' });
         if (res.status === 401 || res.status === 403) {
           console.log('  ⚠ 直链目标需要鉴权：浏览器 <video> 不会自动携带 Basic 凭据');
           console.log('    播放器可能 401。可改用  npm start -- --mode proxy  由后端带凭据转发，');

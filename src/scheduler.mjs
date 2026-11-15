@@ -254,7 +254,9 @@ function makeDaypart(rule, ctx) {
     endless: true,
     next(cursorMs) {
       const i = pickSlot(cursorMs);
-      return engineFor(i).next(cursorMs);
+      const ep = engineFor(i).next(cursorMs);
+      if (ep && slots[i].label) return { ...ep, __segmentLabel: slots[i].label };
+      return ep;
     },
   };
 }
@@ -401,7 +403,7 @@ export class ChannelTimeline {
             relStart: cursor,
             durationMs: ep.durationMs,
             segmentIndex: u.segIndex,
-            segmentLabel: u.label,
+            segmentLabel: ep.__segmentLabel || u.label,
           });
           cursor += ep.durationMs;
           pulled++;

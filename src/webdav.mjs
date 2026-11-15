@@ -14,9 +14,9 @@ export class WebDavClient {
    * @param {number} [opts.retries]
    */
   constructor({ baseUrl, username = '', password = '', timeoutMs = 20000, retries = 2 } = {}) {
-    if (!baseUrl) throw new Error('WebDAV baseUrl 不能为空');
-    this.baseUrl = String(baseUrl).replace(/\/+$/, '');
-    this.rootPath = new URL(this.baseUrl).pathname.replace(/\/+$/, '');
+    // 允许空 baseUrl（首次启动尚未配置）：真正发起请求时才会报错
+    this.baseUrl = String(baseUrl || '').replace(/\/+$/, '');
+    this.rootPath = this.baseUrl ? new URL(this.baseUrl).pathname.replace(/\/+$/, '') : '';
     this.username = username;
     this.password = password;
     this.timeoutMs = timeoutMs;
@@ -29,6 +29,7 @@ export class WebDavClient {
   }
 
   url(relPath = '') {
+    if (!this.baseUrl) throw new Error('还没有配置 WebDAV 地址');
     return joinUrl(this.baseUrl, relPath);
   }
 
