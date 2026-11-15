@@ -10,7 +10,7 @@ name: anime-rotator
 
 services:
   anime-rotator:
-    image: ${IMAGE:-ghcr.io/OWNER/anime-rotator:latest}
+    image: ${IMAGE:-ghcr.io/luvhx/anime-rotator:latest}
     container_name: anime-rotator
     restart: unless-stopped
     ports:
@@ -59,7 +59,7 @@ services:
 
   # 可选：定时重扫索引（每天 04:00），新增番剧后自动进时间轴
   rescan:
-    image: ${IMAGE:-ghcr.io/OWNER/anime-rotator:latest}
+    image: ${IMAGE:-ghcr.io/luvhx/anime-rotator:latest}
     profiles: ["recurring"]
     restart: unless-stopped
     command:

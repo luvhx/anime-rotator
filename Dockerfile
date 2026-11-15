@@ -8,7 +8,7 @@ FROM node:22-alpine
 
 LABEL org.opencontainers.image.title="anime-rotator" \
       org.opencontainers.image.description="WebDAV 动画库轮播：多规则编排时间轴，按时间定位视频与进度，支持 302 直链" \
-      org.opencontainers.image.source="https://github.com/OWNER/anime-rotator" \
+      org.opencontainers.image.source="https://github.com/luvhx/anime-rotator" \
       org.opencontainers.image.licenses="MIT"
 
 ENV NODE_ENV=production \

@@ -1,5 +1,7 @@
 # 番剧轮播 · Anime Rotator
 
+[![build](https://github.com/luvhx/anime-rotator/actions/workflows/build.yml/badge.svg)](https://github.com/luvhx/anime-rotator/actions/workflows/build.yml)
+
 把 WebDAV 上的动画库变成一条**永不落幕的直播频道**：后端按多种规则编排播出时间表，任意时刻都能算出「现在在播哪一集、播到了第几秒」；前端打开就是直播，自动定位到当前进度，并提供 302 直链播放与自定义 URL 前缀。
 
 ```
@@ -66,12 +68,12 @@ npm test                             # 编排引擎自检（不联网，CI 同�
 
 ## Docker 部署（预构建镜像）
 
-镜像：`ghcr.io/OWNER/anime-rotator:latest`（linux/amd64 + linux/arm64，约 150 MB，零依赖）
+镜像：`ghcr.io/luvhx/anime-rotator:latest`（linux/amd64 + linux/arm64，约 150 MB，零依赖）
 
 ### 三步启动
 
 ```bash
-git clone https://github.com/OWNER/anime-rotator.git && cd anime-rotator
+git clone https://github.com/luvhx/anime-rotator.git && cd anime-rotator
 cp .env.example .env        # 填 WEBDAV_BASE_URL / WEBDAV_USERNAME / WEBDAV_PASSWORD
 docker compose up -d
 ```
