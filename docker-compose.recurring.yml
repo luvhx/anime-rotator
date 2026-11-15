@@ -6,7 +6,7 @@
 
 services:
   rescan:
-    image: ${IMAGE:-ghcr.io/luvhx/anime-rotator:latest}
+    image: ${IMAGE:-ghcr.io/luvhx/anime-rotator-app:latest}
     container_name: anime-rotator-rescan
     restart: unless-stopped
     command:

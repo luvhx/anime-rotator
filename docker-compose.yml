@@ -9,7 +9,7 @@ name: anime-rotator
 
 services:
   anime-rotator:
-    image: ${IMAGE:-ghcr.io/luvhx/anime-rotator:latest}
+    image: ${IMAGE:-ghcr.io/luvhx/anime-rotator-app:latest}
     container_name: anime-rotator
     restart: unless-stopped
     ports:

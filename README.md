@@ -142,7 +142,7 @@ environment:
 
 ## Docker 部署
 
-镜像：`ghcr.io/luvhx/anime-rotator`（`latest` / `1.0.0` / `main`，linux/amd64 + linux/arm64，压缩后约 59 MB，零依赖，**公开可匿名拉取**）
+镜像：`ghcr.io/luvhx/anime-rotator-app`（`latest` / `1.0.0` / `main`，linux/amd64 + linux/arm64，压缩后约 59 MB，零依赖，**公开可匿名拉取**）
 
 ### 两条命令
 
