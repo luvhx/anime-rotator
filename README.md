@@ -142,7 +142,7 @@ environment:
 
 ## Docker 部署
 
-镜像：`ghcr.io/luvhx/anime-rotator-app`（`latest` / `1.0.0` / `main`，linux/amd64 + linux/arm64，压缩后约 59 MB，零依赖，**公开可匿名拉取**）
+镜像：`ghcr.io/luvhx/anime-rotator-app`（`latest` / `1.1.0` / `main`，linux/amd64 + linux/arm64，压缩后约 59 MB，零依赖，**公开可匿名拉取**）
 
 ### 两条命令
 
@@ -572,6 +572,8 @@ npm run smoke
 **第一次打开只有「未配置」？** 这是预期行为：现在支持零配置启动，去 `/admin` 填 WebDAV 即可；`docker compose up -d` 不需要任何环境变量。
 
 **怎么给 /admin 加密码？** 设置环境变量 `ADMIN_PASSWORD`，重启后 `/admin` 与 `/api/admin/*` 需要 HTTP Basic 认证。
+
+**镜像名为什么叫 anime-rotator-app？** 早期发布过一个 `ghcr.io/luvhx/anime-rotator` 包，它与被重建前的仓库绑定过，GitHub 不允许新仓库写入同名包，因此改用 `anime-rotator-app`。旧包（v1.0 内容）可以删除。
 
 ---
 
