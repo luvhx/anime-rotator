@@ -27,6 +27,7 @@ const state = {
   lastSeekAt: 0,
   subtitleOn: localStorage.getItem('rotator.subtitles') !== '0',
   subtitleFor: null,
+  prefetchedSub: null,
   autoplay: null,
   setup: false,
   fetchTimer: null,
@@ -234,6 +235,14 @@ function showStartOverlay(msg) {
   if (btn) btn.textContent = msg || '▶ 开始收看';
 }
 
+/** 提前把下一集字幕拉进后端缓存，切集时不用等 */
+function prefetchNextSubtitle() {
+  const next = state.now?.next?.[0];
+  if (!next || !next.subtitleUrl || state.prefetchedSub === next.fileId) return;
+  state.prefetchedSub = next.fileId;
+  fetch(next.subtitleUrl).catch(() => {});
+}
+
 function showUnmuteHint() {
   const hint = $('unmuteHint');
   if (hint) hint.hidden = false;
@@ -298,6 +307,9 @@ function tick() {
   if (!item) return;
   const nowMs = serverNow();
   const remainingMs = item.endsAt - nowMs;
+
+  // 快播完时预取下一集字幕（内挂字幕首次需要抽取，提前预热）
+  if (remainingMs < 180000) prefetchNextSubtitle();
 
   if (remainingMs <= 250) {
     // 本集要结束了，立刻取下一个节目
