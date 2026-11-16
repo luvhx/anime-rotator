@@ -482,3 +482,39 @@ a.ghost.link {
 .overlay .start-btn {
   text-decoration: none;
 }
+
+.unmute-hint {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(8, 10, 14, 0.72);
+  color: #e8ecf5;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+}
+
+.unmute-hint[hidden] {
+  display: none;
+}
+
+.debug-panel {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  margin: 0;
+  padding: 10px 12px;
+  max-width: 90%;
+  background: rgba(5, 7, 12, 0.82);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: #b9c3d6;
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre;
+  overflow: auto;
+  pointer-events: none;
+}

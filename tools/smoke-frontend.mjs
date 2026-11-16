@@ -60,6 +60,10 @@ class El {
       this.readyState = 1;
       this.duration = 1400;
       this.dispatch('loadedmetadata');
+      setTimeout(() => {
+        this.readyState = 4;
+        this.dispatch('canplay');
+      }, 60);
     }, 30);
   }
   play() {

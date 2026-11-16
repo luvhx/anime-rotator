@@ -24,6 +24,9 @@ const state = {
   drift: null,
   justLoaded: true,
   switching: false,
+  lastSeekAt: 0,
+  autoplay: null,
+  setup: false,
   fetchTimer: null,
   fetchPending: false,
   errors: 0,
@@ -157,26 +160,71 @@ function loadItem(item, announce) {
   state.switching = true;
   state.drift = null;
   const url = item.streamUrl || `/stream/${item.fileId}`;
-  $('overlay').classList.add('hidden');
   if (announce) setStatus(`切换节目：${item.series} S${item.season}E${item.episode}`);
   player.src = url;
   player.load();
   setTimeout(() => {
     state.switching = false;
   }, 2000);
+  // 已经在播：换源后继续播（保持静音状态）；还没开始：保留「开始收看」按钮
   if (state.started) {
-    player.muted = false;
+    hideOverlay();
     tryPlay();
+  } else {
+    showStartOverlay();
+  }
+}
+
+function hideOverlay() {
+  $('overlay').classList.add('hidden');
+}
+
+function showStartOverlay(msg) {
+  if (state.setup) return;
+  const overlay = $('overlay');
+  overlay.classList.remove('hidden');
+  const btn = $('startBtn');
+  if (btn) btn.textContent = msg || '▶ 开始收看';
+}
+
+function showUnmuteHint() {
+  const hint = $('unmuteHint');
+  if (hint) hint.hidden = false;
+}
+
+function hideUnmuteHint() {
+  const hint = $('unmuteHint');
+  if (hint) hint.hidden = true;
+}
+
+/**
+ * 首屏先静音自动播放：浏览器允许静音自动播放，用户点一下即可取消静音。
+ * 这样打开页面就能看到画面在动，而不是停在第一帧。
+ */
+async function autoStartMuted() {
+  if (state.started || state.setup) return;
+  player.muted = true;
+  try {
+    await player.play();
+    state.started = true;
+    state.userPaused = false;
+    state.autoplay = 'muted';
+    hideOverlay();
+    showUnmuteHint();
+    setStatus('静音播放中 · 点击任意处取消静音');
+  } catch {
+    state.autoplay = 'blocked';
+    showStartOverlay('▶ 点击开始（浏览器需要一次点击）');
   }
 }
 
 function tryPlay() {
   const p = player.play();
   if (p && typeof p.catch === 'function') {
-    p.catch(() => {
-      // 浏览器自动播放策略：需要用户手势
-      if (!state.started) {
-        $('overlay').classList.remove('hidden');
+    p.catch((err) => {
+      if (err && err.name === 'NotAllowedError') {
+        state.started = false;
+        showStartOverlay('▶ 浏览器阻止了自动播放，点一下开始');
       }
     });
   }
@@ -215,14 +263,20 @@ function tick() {
     const drift = player.currentTime - target;
     state.drift = drift;
     const threshold = state.justLoaded ? 2.5 : 4;
-    if (Math.abs(drift) > threshold) {
+    // 首次对齐只要元数据就绪即可；之后的纠偏要等缓冲够、且 3 秒内不重复 seek，
+    // 否则会陷入「反复跳转 → 永远缓冲 → 画面不动」
+    const canSeek =
+      !player.seeking &&
+      (state.justLoaded ? player.readyState >= 1 : player.readyState >= 2 && nowMs - state.lastSeekAt > 3000);
+    if (Math.abs(drift) > threshold && canSeek) {
+      state.lastSeekAt = nowMs;
       try {
         player.currentTime = target;
       } catch {
         /* 元数据未就绪 */
       }
       state.justLoaded = false;
-    } else if (state.justLoaded) {
+    } else if (Math.abs(drift) <= threshold) {
       state.justLoaded = false;
     }
     if (player.paused && !player.ended) tryPlay();
@@ -252,6 +306,9 @@ function updateUi() {
   } else if (state.drift == null) {
     sync.textContent = '同步中…';
     sync.className = 'sync';
+  } else if (player.readyState < 2) {
+    sync.textContent = '缓冲中…';
+    sync.className = 'sync warn';
   } else {
     const a = Math.abs(state.drift);
     if (a < 1) {
@@ -342,6 +399,7 @@ async function loadConfig() {
 }
 
 function showSetup() {
+  state.setup = true;
   const overlay = $('overlay');
   overlay.classList.remove('hidden');
   overlay.innerHTML = '';
@@ -385,17 +443,20 @@ function renderChannels() {
 
 /* ------------------------------ 事件 ------------------------------ */
 
-$('startBtn').addEventListener('click', async () => {
+$('startBtn').addEventListener('click', () => {
   state.started = true;
   state.userPaused = false;
+  state.autoplay = 'user';
   player.muted = false;
-  $('overlay').classList.add('hidden');
-  await refreshNow(true);
+  hideUnmuteHint();
+  hideOverlay();
+  refreshNow(true);
   tryPlay();
 });
 
 player.addEventListener('loadedmetadata', () => {
   state.justLoaded = true;
+  if (!state.started) autoStartMuted();
   const cur = state.now?.now;
   if (cur && state.started) {
     try {
@@ -435,6 +496,37 @@ player.addEventListener('pause', () => {
 });
 
 player.addEventListener('ended', () => scheduleFetch(0));
+
+// 静音自动播放时，点击页面任意处取消静音
+document.addEventListener('click', (e) => {
+  if (!state.started || !player.muted) return;
+  const tag = (e.target && e.target.tagName) || '';
+  if (tag === 'A' || tag === 'BUTTON') return;
+  player.muted = false;
+  hideUnmuteHint();
+  setStatus('已取消静音');
+});
+
+// 调试面板：?debug=1 显示播放器内部状态
+if (new URLSearchParams(location.search).get('debug') === '1') {
+  const panel = $('debugPanel');
+  if (panel) {
+    panel.hidden = false;
+    setInterval(() => {
+      const b = player.buffered;
+      const buffered = b && b.length ? `${b.start(0).toFixed(0)}-${b.end(b.length - 1).toFixed(0)}s` : '-';
+      panel.textContent = [
+        `src       ${String(player.currentSrc || player.src).slice(0, 90)}`,
+        `paused    ${player.paused}   muted ${player.muted}   started ${state.started}`,
+        `readyState ${player.readyState}   networkState ${player.networkState}`,
+        `current   ${player.currentTime.toFixed(1)}   duration ${Number.isFinite(player.duration) ? player.duration.toFixed(1) : player.duration}`,
+        `buffered  ${buffered}`,
+        `drift     ${state.drift === null ? '-' : state.drift.toFixed(1)}`,
+        `error     ${player.error ? player.error.code + ' ' + (player.error.message || '') : '-'}`,
+      ].join('\n');
+    }, 500);
+  }
+}
 
 player.addEventListener('error', () => {
   const code = player.error?.code;
