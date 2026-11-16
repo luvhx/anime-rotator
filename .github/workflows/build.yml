@@ -10,7 +10,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  # 包名与仓库名解耦：旧包 ghcr.io/<owner>/anime-rotator 与已删除的仓库绑定过，
+  # 包名与仓库名解耦：旧的 ghcr.io/<owner>/anime-rotator 包与已删除的仓库绑定过，
   # 新仓库无法写入，故使用独立包名。
   IMAGE_NAME: anime-rotator-app
 
@@ -32,7 +32,7 @@ jobs:
       - name: 语法检查
         run: |
           set -e
-          for f in src/*.mjs src/cli/*.mjs tools/*.mjs public/app.js; do
+          for f in src/*.mjs src/cli/*.mjs tools/*.mjs public/app.js public/admin.js; do
             node --check "$f"
           done
           echo "语法检查通过"
@@ -40,16 +40,29 @@ jobs:
       - name: 编排引擎自检
         run: node tools/selftest.mjs
 
+      - name: 字幕转换自检
+        run: node tools/selftest-subtitles.mjs
+
       - name: 冷启动冒烟（未配置状态）
         run: node tools/smoke-boot.mjs
 
   docker:
-    name: 构建并推送镜像
+    name: 构建并推送镜像 (${{ matrix.name }})
     needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: 轻量
+            suffix: ""
+            with_ffmpeg: "false"
+          - name: 含 ffmpeg
+            suffix: "-ffmpeg"
+            with_ffmpeg: "true"
     steps:
       - uses: actions/checkout@v4
 
@@ -72,6 +85,8 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE }}
+          flavor: |
+            suffix=${{ matrix.suffix }}
           tags: |
             type=ref,event=branch
             type=ref,event=pr
@@ -85,6 +100,8 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
+          build-args: |
+            WITH_FFMPEG=${{ matrix.with_ffmpeg }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha

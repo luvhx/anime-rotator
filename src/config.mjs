@@ -38,6 +38,11 @@ export const DEFAULT_CONFIG = {
   library: {
     fallbackDurationMs: 24 * 60 * 1000,
   },
+  // 字幕：外挂 .ass/.srt 会自动转 WebVTT 挂到 <track>；内挂轨道需要镜像里带 ffmpeg
+  subtitles: {
+    enabled: true,
+    ffmpegPath: 'ffmpeg',
+  },
   // TMDB：用于节目封面 / 简介 / 播出信息（留空则纯本地模式）
   tmdb: {
     apiKey: '',

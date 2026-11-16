@@ -35,6 +35,7 @@ WebDAV 媒体库 ──scan──> data/library.json（含每集真实时长）
 | 前端自动同步 | 打开即在播，每秒校正漂移，可手动「重新同步」；播放器回写真实时长帮助索引自愈 |
 | Web 管理界面 | `/admin` 里改配置、勾选番剧、可视化编辑编排、实时预览节目单，改完即生效 |
 | TMDB 元数据 | 封面、简介、评分、播出日期与剧集标题，自动按中文名匹配，也可手动纠正 |
+| 字幕自动加载 | 外挂 `.ass/.srt` 与 MKV 内挂字幕统一转 WebVTT 挂到 `<track>`，可一键开关 |
 
 ---
 
@@ -140,9 +141,31 @@ environment:
 
 ---
 
+## 字幕
+
+浏览器只认 WebVTT（MKV 里的 ASS 基本不支持），所以后端统一转码后挂到 `<track>`：
+
+| 来源 | 处理方式 | 需要的镜像 |
+| --- | --- | --- |
+| 外挂 `.ass` / `.ssa` / `.srt` / `.vtt` | 纯 JS 解析 → WebVTT（去样式标签、保留台词与换行） | 默认镜像即可 |
+| MKV 内挂字幕轨（ASS / SRT） | ffmpeg 抽取 → WebVTT，按集缓存到 `data/subs/` | `:latest-ffmpeg` 变体 |
+
+- 播放器底栏有「字幕 开 / 关」按钮，开关状态存在浏览器里；
+- 打开即自动挂载，`<track>` 自带时间轴，拖进度、切集都不用额外处理；
+- `GET /subtitle/<fileId>` 返回 `text/vtt`，响应头 `X-Subtitle-Source: external|embedded` 标明来源；
+- `/admin → 配置 → 字幕` 可以整体关闭（关掉后连接口都不再提供）。
+
+内挂字幕第一次加载要把整集读一遍（600 MB 约 30–60 秒，取决于 WebDAV 速度），转完写缓存，之后秒开。
+
+**限制**：ASS 的特效、定位、字体样式会丢失（WebVTT 不支持这些），只保留文本与换行；一个 `.ass` 里同时含日中双语的，两种都会显示出来。
+
+---
+
 ## Docker 部署
 
-镜像：`ghcr.io/luvhx/anime-rotator-app`（`latest` / `1.1.0` / `main`，linux/amd64 + linux/arm64，压缩后约 59 MB，零依赖，**公开可匿名拉取**）
+镜像：`ghcr.io/luvhx/anime-rotator-app`（`latest` / `1.2.0` / `main`，linux/amd64 + linux/arm64，压缩后约 59 MB，零依赖，**公开可匿名拉取**）
+
+另有自带 ffmpeg 的变体 `ghcr.io/luvhx/anime-rotator-app:latest-ffmpeg`（+约 50 MB），用于抽取 MKV 内挂字幕。
 
 ### 两条命令
 
@@ -417,6 +440,7 @@ if (Math.abs(video.currentTime - target) > 4) video.currentTime = target;  // �
 | GET | `/api/admin/tmdb/search?q=` | 手动匹配时搜索 TMDB |
 | POST | `/api/admin/tmdb/test` | 测试 TMDB Key 是否可用 |
 | POST | `/api/admin/series/:id/tmdb` | 手动指定 TMDB ID `{tmdbId}` |
+| GET | `/subtitle/<fileId>` | 该集字幕的 WebVTT（外挂转换 / ffmpeg 抽取，带缓存） |
 
 `/api/now` 响应节选：
 
@@ -514,6 +538,7 @@ location /media/ {
 │   └── admin.css
 ├── tools/
 │   ├── selftest.mjs            # 编排引擎自检（CI，不联网）
+│   ├── selftest-subtitles.mjs  # 字幕转换自检（CI，不联网）
 │   ├── smoke-boot.mjs          # 冷启动冒烟（CI，不联网）
 │   ├── smoke-api.mjs           # 播放接口端到端
 │   ├── smoke-frontend.mjs      # 播放器 DOM 冒烟
@@ -547,7 +572,7 @@ npm run smoke
 - `smoke-frontend`：用最小 DOM 桩加载 `public/app.js`，验证「取时间轴 → 设置 src → seek 到直播位置 → 漂移重同步」。
 - `smoke-admin`：管理接口（状态脱敏、选片、预览、编排校验、非法输入拒绝、静态资源）。
 - `smoke-admin-ui`：DOM 桩加载 `public/admin.js`，验证「概览 → 番剧库 → 编排 → 预览」整条交互链路无运行时错误。
-- `npm test`：编排引擎自检 + 冷启动冒烟，两个都不联网，CI 同款。
+- `npm test`：编排引擎自检 + 字幕转换自检 + 冷启动冒烟，都不联网，CI 同款。
 
 本机运行结果：15 项接口检查 + 11 项前端检查全部通过。
 

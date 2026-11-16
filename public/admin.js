@@ -160,6 +160,7 @@ function buildDraft(state) {
     },
     timezone: st.timezone ?? cfg.timezone,
     tmdb: { apiKey: '', readToken: '', language: st.tmdb?.language ?? cfg.tmdb.language },
+    subtitles: { enabled: st.subtitles?.enabled ?? cfg.subtitles?.enabled !== false },
     channels,
     selection: normalizeSelection(st.selection ?? state.selection),
   };
@@ -325,6 +326,14 @@ function fillConfigForm() {
   $('#cfg-embed').checked = Boolean(d.stream.embedCredentials);
   $('#cfg-timezone').value = d.timezone || 'Asia/Shanghai';
   $('#cfg-tmdb-lang').value = d.tmdb.language || 'zh-CN';
+  $('#cfg-subs').checked = S.draft.subtitles?.enabled !== false;
+  const subsHint = $('#subsHint');
+  if (subsHint && S.state.config.subtitles) {
+    const ff = S.state.config.subtitles.ffmpeg;
+    subsHint.innerHTML = ff
+      ? '外挂 <code>.ass</code>/<code>.srt</code> 与 MKV 内挂字幕都会自动转成 WebVTT 加载（当前镜像已带 ffmpeg）。'
+      : '外挂 <code>.ass</code>/<code>.srt</code> 会自动转成 WebVTT；MKV 内挂字幕需要换用带 ffmpeg 的镜像 <code>:latest-ffmpeg</code>。';
+  }
   $('#cfg-tmdb-key').value = '';
   $('#cfg-tmdb-key').placeholder = S.state.config.tmdb.enabled ? '已设置，留空则不修改' : '未配置';
   $('#cfg-tmdb-token').value = '';
@@ -358,6 +367,10 @@ function bindConfigForm() {
     $(`#${id}`).addEventListener('change', read);
   }
   $('#cfg-embed').addEventListener('change', read);
+  $('#cfg-subs').addEventListener('change', (e) => {
+    S.draft.subtitles = { enabled: e.target.checked };
+    markDirty('config');
+  });
 
   $('#btnTmdbTest').addEventListener('click', async () => {
     const btn = $('#btnTmdbTest');
@@ -958,6 +971,7 @@ async function saveAll() {
     },
     timezone: S.draft.timezone,
     tmdb: { language: S.draft.tmdb.language },
+    subtitles: { enabled: S.draft.subtitles?.enabled !== false },
     channels: S.draft.channels,
     selection: S.draft.selection,
   };

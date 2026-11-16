@@ -17,6 +17,7 @@ import {
 } from './settings.mjs';
 import { settingsFromConfig, finalizeConfig } from './config.mjs';
 import { TmdbClient } from './tmdb.mjs';
+import { SubtitleService } from './subtitles.mjs';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -54,6 +55,7 @@ export function createApp(baseConfig) {
     timelines: new Map(),
     tmdb: null,
     tmdbResolved: new Map(),
+    subs: null,
     scan: { running: false, stage: null, done: 0, total: 0, extra: '', startedAt: null, finishedAt: null, error: null },
     error: null,
   };
@@ -75,6 +77,13 @@ export function createApp(baseConfig) {
     });
     state.tmdbResolved.clear();
     state.timelines.clear();
+    state.subs = new SubtitleService({
+      dav: state.dav,
+      cacheDir: path.join(path.dirname(cfg.paths.library), 'subs'),
+      ffmpegPath: cfg.subtitles?.ffmpegPath || 'ffmpeg',
+      enabled: cfg.subtitles?.enabled !== false,
+    });
+    state.subs.detectFfmpeg();
     if (reloadLibrary) {
       if (fs.existsSync(cfg.paths.library)) {
         try {
@@ -151,7 +160,20 @@ export function createApp(baseConfig) {
       endText: clockText(item.endsAt),
       streamUrl: streamUrlOf(ep, opts),
       directUrl: directUrlOf(ep, opts.prefix),
+      subtitleUrl: subtitleEnabled() && subtitleKindOf(ep) ? `/subtitle/${ep.fileId}` : null,
+      subtitleKind: subtitleEnabled() ? subtitleKindOf(ep) : null,
     };
+  }
+
+  function subtitleEnabled() {
+    return state.config.subtitles?.enabled !== false;
+  }
+
+  /** external = 同目录 .ass/.srt；embedded = MKV 内挂（需要 ffmpeg） */
+  function subtitleKindOf(ep) {
+    if (ep.subtitle) return 'external';
+    if (state.subs?.ffmpegAvailable) return 'embedded';
+    return null;
   }
 
   function channelSummary(def) {
@@ -326,6 +348,7 @@ export function createApp(baseConfig) {
         },
         timezone: cfg.timezone,
         tmdb: { language: cfg.tmdb.language, enabled: state.tmdb.enabled, mode: state.tmdb.mode, lastError: state.tmdb.lastError },
+        subtitles: { enabled: cfg.subtitles?.enabled !== false, ffmpeg: Boolean(state.subs?.ffmpegAvailable) },
         paths: { library: cfg.paths.library, settings: state.settingsFile },
         library: { fallbackDurationMs: cfg.library.fallbackDurationMs },
       },
@@ -396,6 +419,7 @@ export function createApp(baseConfig) {
       if (keep) next.stream = { ...(next.stream || {}), token: keep };
     }
     if (incoming.channels) next.channels = incoming.channels;
+    if (incoming.subtitles) next.subtitles = { ...(cur.subtitles || {}), ...incoming.subtitles };
 
     const before = state.config.webdav;
     saveSettings(state.settingsFile, next);
@@ -742,6 +766,7 @@ export function createApp(baseConfig) {
           channels: state.config.channels.map((c) => c.id),
           scan: { running: state.scan.running, stage: state.scan.stage, done: state.scan.done, total: state.scan.total },
           tmdb: { enabled: state.tmdb.enabled },
+          subtitles: { enabled: subtitleEnabled(), ffmpeg: Boolean(state.subs?.ffmpegAvailable) },
         });
       }
 
@@ -788,6 +813,25 @@ export function createApp(baseConfig) {
       }
       if (pathname === '/api/admin/tmdb/search') return await apiAdminTmdbSearch(url, res);
       if (pathname === '/api/admin/tmdb/test' && req.method === 'POST') return await apiAdminTmdbTest(req, res);
+
+      /* ---- 字幕 ---- */
+      if (pathname.startsWith('/subtitle/')) {
+        if (!subtitleEnabled()) throw new HttpError(404, '字幕功能已关闭');
+        const fileId = pathname.slice('/subtitle/'.length);
+        const ep = state.library.getEpisode(fileId);
+        if (!ep) throw new HttpError(404, `未知文件：${fileId}`);
+        const result = await state.subs.get(ep);
+        if (!result) {
+          throw new HttpError(404, ep.subtitle ? '字幕转换失败' : '这一集没有外挂字幕，也没有可抽取的内挂字幕');
+        }
+        res.writeHead(200, {
+          'Content-Type': 'text/vtt; charset=utf-8',
+          'Cache-Control': 'public, max-age=86400',
+          'Access-Control-Allow-Origin': '*',
+          'X-Subtitle-Source': result.source,
+        });
+        return res.end(result.text);
+      }
 
       /* ---- 视频流 ---- */
       if (pathname.startsWith('/stream/')) {

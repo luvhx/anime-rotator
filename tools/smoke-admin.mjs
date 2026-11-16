@@ -70,6 +70,32 @@ if (lib.loaded) {
   check(bad.status === 400, '未知规则类型被拒绝', bad.data?.error?.slice(0, 40));
 }
 
+// 字幕：找一集带外挂字幕的，验证 /subtitle 转码
+if (lib.loaded) {
+  const list = await api('/api/admin/series?limit=12');
+  let target = null;
+  for (const item of list.data.series) {
+    const detail = await api(`/api/admin/series/${encodeURIComponent(item.id)}`);
+    const ep = (detail.data.episodes || []).find((e) => e.subtitle);
+    if (ep) {
+      target = ep;
+      break;
+    }
+  }
+  if (target) {
+    const res = await fetch(`${BASE}/subtitle/${target.fileId}`);
+    const text = await res.text();
+    const cues = (text.match(/-->/g) || []).length;
+    check(
+      res.status === 200 && (res.headers.get('content-type') || '').includes('text/vtt') && cues > 0,
+      '外挂字幕转 WebVTT',
+      `${cues} 条 · ${res.headers.get('x-subtitle-source')}`,
+    );
+  } else {
+    console.log('• 跳过字幕检查（样例里没有带外挂字幕的剧集）');
+  }
+}
+
 // 设置校验（dryRun，不落盘）
 const dry = await api('/api/admin/settings', {
   method: 'PUT',

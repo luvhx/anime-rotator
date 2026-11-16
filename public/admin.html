@@ -89,6 +89,17 @@
         </div>
 
         <div class="panel">
+          <div class="panel-head"><h2>字幕</h2></div>
+          <div class="form-grid">
+            <label class="check inline"><input type="checkbox" id="cfg-subs" /> 自动加载字幕</label>
+          </div>
+          <p class="hint" id="subsHint">
+            外挂 <code>.ass</code> / <code>.srt</code> 会自动转成 WebVTT 挂到播放器；MKV 内挂字幕需要带 ffmpeg 的镜像
+            （<code>ghcr.io/luvhx/anime-rotator-app:latest-ffmpeg</code>）。
+          </p>
+        </div>
+
+        <div class="panel">
           <div class="panel-head"><h2>时区与 TMDB</h2></div>
           <div class="form-grid">
             <label>时区 <input id="cfg-timezone" list="tzList" placeholder="Asia/Shanghai" /> </label>

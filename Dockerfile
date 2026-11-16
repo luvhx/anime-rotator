@@ -21,7 +21,10 @@ ENV NODE_ENV=production \
 WORKDIR /app
 
 # 以 root 安装 su-exec：入口脚本借此修正挂载目录权限后降权到 app 用户运行
-RUN apk add --no-cache su-exec
+# WITH_FFMPEG=true 时额外安装 ffmpeg（用于抽取 MKV 内挂字幕），镜像大约增加 50 MB
+ARG WITH_FFMPEG=false
+RUN apk add --no-cache su-exec \
+    && if [ "$WITH_FFMPEG" = "true" ]; then apk add --no-cache ffmpeg; fi
 
 # 应用本体
 COPY package.json ./

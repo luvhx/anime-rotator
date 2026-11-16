@@ -518,3 +518,8 @@ a.ghost.link {
   overflow: auto;
   pointer-events: none;
 }
+
+#subtitleBtn.on {
+  color: var(--accent-2);
+  border-color: rgba(55, 224, 192, 0.45);
+}

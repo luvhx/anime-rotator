@@ -25,6 +25,8 @@ const state = {
   justLoaded: true,
   switching: false,
   lastSeekAt: 0,
+  subtitleOn: localStorage.getItem('rotator.subtitles') !== '0',
+  subtitleFor: null,
   autoplay: null,
   setup: false,
   fetchTimer: null,
@@ -134,6 +136,8 @@ function applyNow(prevFileId) {
 
   if (item.fileId !== state.activeFileId) {
     loadItem(item, item.fileId !== prevFileId && prevFileId !== undefined);
+  } else if (state.subtitleFor !== item.fileId) {
+    applySubtitle(item);
   }
 
   $('seriesName').textContent = item.series;
@@ -166,6 +170,8 @@ function loadItem(item, announce) {
   setTimeout(() => {
     state.switching = false;
   }, 2000);
+  state.subtitleFor = null;
+  applySubtitle(item);
   // 已经在播：换源后继续播（保持静音状态）；还没开始：保留「开始收看」按钮
   if (state.started) {
     hideOverlay();
@@ -173,6 +179,47 @@ function loadItem(item, announce) {
   } else {
     showStartOverlay();
   }
+}
+
+/**
+ * 挂载字幕：后端把 .ass/.srt/内挂轨道统一转成 WebVTT，
+ * 这里只需要一个 <track>，浏览器会自己按时间轴显示。
+ */
+function applySubtitle(item) {
+  for (const t of [...player.querySelectorAll('track')]) t.remove();
+  const btn = $('subtitleBtn');
+  if (!btn) return;
+  if (!item || !item.subtitleUrl) {
+    btn.hidden = true;
+    state.subtitleFor = item?.fileId || null;
+    return;
+  }
+  btn.hidden = false;
+  btn.textContent = state.subtitleOn ? '字幕 开' : '字幕 关';
+  btn.classList.toggle('on', state.subtitleOn);
+  state.subtitleFor = item.fileId;
+  if (!state.subtitleOn) return;
+
+  const track = document.createElement('track');
+  track.kind = 'subtitles';
+  track.label = item.subtitleKind === 'embedded' ? '内挂字幕' : '外挂字幕';
+  track.srclang = 'zh';
+  track.src = item.subtitleUrl;
+  track.default = true;
+  track.addEventListener('load', () => {
+    const tt = player.textTracks && player.textTracks[0];
+    if (tt) tt.mode = 'showing';
+  });
+  track.addEventListener('error', () => {
+    btn.hidden = true;
+    setStatus('字幕加载失败（这一集可能没有可用字幕）');
+  });
+  player.append(track);
+  // 部分浏览器需要显式把轨道设为显示
+  setTimeout(() => {
+    const tt = player.textTracks && player.textTracks[0];
+    if (tt) tt.mode = 'showing';
+  }, 300);
 }
 
 function hideOverlay() {
@@ -537,6 +584,13 @@ player.addEventListener('error', () => {
     4: '视频源不可用（可能 401/404）',
   };
   showError(`播放失败：${map[code] || '未知错误'}${code ? ` (code ${code})` : ''}`);
+});
+
+$('subtitleBtn')?.addEventListener('click', () => {
+  state.subtitleOn = !state.subtitleOn;
+  localStorage.setItem('rotator.subtitles', state.subtitleOn ? '1' : '0');
+  applySubtitle(state.now?.now);
+  setStatus(state.subtitleOn ? '字幕已开启' : '字幕已关闭');
 });
 
 $('resyncBtn').addEventListener('click', () => {

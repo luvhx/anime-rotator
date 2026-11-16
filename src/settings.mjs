@@ -52,6 +52,7 @@ export function applySettings(baseConfig, settings = {}) {
   if (Object.keys(stream).length > 0) cfg.stream = { ...cfg.stream, ...stream };
   if (settings.timezone) cfg.timezone = settings.timezone;
   if (settings.tmdb) cfg.tmdb = { ...(cfg.tmdb || {}), ...pick(settings.tmdb, ['apiKey', 'readToken', 'language']) };
+  if (settings.subtitles) cfg.subtitles = { ...(cfg.subtitles || {}), ...pick(settings.subtitles, ['enabled']) };
   if (Array.isArray(settings.channels) && settings.channels.length > 0) cfg.channels = structuredClone(settings.channels);
   cfg.selection = normalizeSelection(settings.selection, cfg.selection);
   return cfg;
@@ -123,6 +124,10 @@ export function validateSettings(settings, { baseConfig, timezone } = {}) {
   }
 
   const tz = settings.timezone || timezone || 'Asia/Shanghai';
+  if (settings.subtitles && settings.subtitles.enabled !== undefined && typeof settings.subtitles.enabled !== 'boolean') {
+    throw new Error('subtitles.enabled 必须是布尔值');
+  }
+
   if (settings.selection) {
     if (settings.selection.mode && !['all', 'include'].includes(settings.selection.mode)) {
       throw new Error('选片模式只能是 all 或 include');
