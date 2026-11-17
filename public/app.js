@@ -28,6 +28,10 @@ const state = {
   subtitleOn: localStorage.getItem('rotator.subtitles') !== '0',
   subtitleFor: null,
   prefetchedSub: null,
+  forceCompat: false,
+  compatJob: null,
+  loadStartedAt: 0,
+  watchdogFired: false,
   autoplay: null,
   setup: false,
   fetchTimer: null,
@@ -36,6 +40,11 @@ const state = {
 };
 
 const player = $('player');
+
+/* iOS / iPadOS 上所有浏览器都不支持 MKV 容器，需要走转封装 */
+const IS_APPLE_MOBILE =
+  /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1);
 
 /* ------------------------------ 时间 ------------------------------ */
 
@@ -166,19 +175,104 @@ function loadItem(item, announce) {
   state.drift = null;
   const url = item.streamUrl || `/stream/${item.fileId}`;
   if (announce) setStatus(`切换节目：${item.series} S${item.season}E${item.episode}`);
+  state.subtitleFor = null;
+  applySubtitle(item);
+  state.loadStartedAt = Date.now();
+  state.watchdogFired = false;
+
+  // 兼容模式（iOS/Safari 等不支持 MKV）：直接走转封装，避免先拉一次注定失败的 MKV
+  if (state.forceCompat) {
+    state.switching = false;
+    startCompat(item);
+    return;
+  }
+
   player.src = url;
   player.load();
   setTimeout(() => {
     state.switching = false;
   }, 2000);
-  state.subtitleFor = null;
-  applySubtitle(item);
+
   // 已经在播：换源后继续播（保持静音状态）；还没开始：保留「开始收看」按钮
   if (state.started) {
     hideOverlay();
     tryPlay();
   } else {
     showStartOverlay();
+  }
+}
+
+/* ---------------- 兼容模式：MKV → MP4 转封装 ---------------- */
+
+function showCompat(progress, text) {
+  const panel = $('compatPanel');
+  if (!panel) return;
+  panel.hidden = false;
+  const bar = $('compatBar');
+  if (bar) bar.style.width = `${Math.round((progress || 0) * 100)}%`;
+  const sub = $('compatSub');
+  if (sub && text) sub.textContent = text;
+}
+
+function hideCompat() {
+  const panel = $('compatPanel');
+  if (panel) panel.hidden = true;
+}
+
+/**
+ * 请求后端把这集转封装成 MP4 并等待就绪。
+ * 只做容器转换（视频流 copy、音频转 AAC），不重新编码，通常几十秒。
+ */
+async function startCompat(item) {
+  if (!item) return;
+  if (state.compatJob && state.compatJob.fileId === item.fileId) return;
+  state.compatJob = { fileId: item.fileId };
+  hideOverlay();
+  showCompat(0, '正在为你的设备转封装（MKV → MP4）…');
+
+  const applyReady = () => {
+    hideCompat();
+    player.src = `/stream/${item.fileId}?format=mp4`;
+    player.load();
+    state.justLoaded = true;
+    state.loadStartedAt = Date.now();
+    if (!state.started) autoStartMuted();
+    else tryPlay();
+  };
+
+  try {
+    let st = await fetch(`/api/remux/${item.fileId}`, { method: 'POST' }).then((r) => r.json());
+    if (st.state === 'ready') return applyReady();
+    if (st.state === 'unavailable' || st.state === 'disabled') {
+      hideCompat();
+      showError(`无法转封装：${st.reason || '当前镜像没有 ffmpeg，请使用 :latest-ffmpeg 镜像'}`);
+      return;
+    }
+    if (st.state === 'error') {
+      hideCompat();
+      showError(`转封装失败：${st.error || '未知错误'}`);
+      return;
+    }
+
+    for (let i = 0; i < 300; i++) {
+      await new Promise((r) => setTimeout(r, 2000));
+      st = await fetch(`/api/remux/${item.fileId}`).then((r) => r.json());
+      if (st.state === 'ready') return applyReady();
+      if (st.state === 'error') {
+        hideCompat();
+        showError(`转封装失败：${st.error || '未知错误'}`);
+        return;
+      }
+      const pct = Math.round((st.progress || 0) * 100);
+      showCompat(st.progress || 0, `正在转封装… ${pct}%（视频流直接复制，不重新编码）`);
+    }
+    hideCompat();
+    showError('转封装超时，请稍后重试');
+  } catch (err) {
+    hideCompat();
+    showError(`转封装请求失败：${err.message}`);
+  } finally {
+    state.compatJob = null;
   }
 }
 
@@ -307,6 +401,24 @@ function tick() {
   if (!item) return;
   const nowMs = serverNow();
   const remainingMs = item.endsAt - nowMs;
+
+  // 载入 12 秒还没有任何可播数据：多半是容器/编码不支持（典型：iOS 上的 MKV）
+  if (
+    !state.watchdogFired &&
+    !state.forceCompat &&
+    state.activeFileId &&
+    player.readyState < 2 &&
+    nowMs - state.loadStartedAt > 12000
+  ) {
+    state.watchdogFired = true;
+    if (IS_APPLE_MOBILE) {
+      state.forceCompat = true;
+      $('compatBtn')?.classList.add('on');
+      startCompat(item);
+    } else {
+      showError('这个文件在当前浏览器放不了（MKV / HEVC 常见）。点底栏「兼容模式」转成 MP4 再试。');
+    }
+  }
 
   // 快播完时预取下一集字幕（内挂字幕首次需要抽取，提前预热）
   if (remainingMs < 180000) prefetchNextSubtitle();
@@ -595,7 +707,7 @@ player.addEventListener('error', () => {
     3: '解码失败（容器/编码不受支持）',
     4: '视频源不可用（可能 401/404）',
   };
-  showError(`播放失败：${map[code] || '未知错误'}${code ? ` (code ${code})` : ''}`);
+  showError(`播放失败：${map[code] || '未知错误'}${code ? ` (code ${code})` : ''}${code === 3 || code === 4 ? '　→ 试试底栏「兼容模式」' : ''}`);
 });
 
 $('subtitleBtn')?.addEventListener('click', () => {
@@ -603,6 +715,23 @@ $('subtitleBtn')?.addEventListener('click', () => {
   localStorage.setItem('rotator.subtitles', state.subtitleOn ? '1' : '0');
   applySubtitle(state.now?.now);
   setStatus(state.subtitleOn ? '字幕已开启' : '字幕已关闭');
+});
+
+$('compatBtn')?.addEventListener('click', () => {
+  state.forceCompat = !state.forceCompat;
+  localStorage.setItem('rotator.compat', state.forceCompat ? '1' : '0');
+  $('compatBtn').classList.toggle('on', state.forceCompat);
+  state.compatJob = null;
+  setStatus(state.forceCompat ? '兼容模式：MKV 转为 MP4' : '兼容模式已关闭');
+  const item = state.now?.now;
+  if (item) {
+    if (state.forceCompat) startCompat(item);
+    else {
+      hideCompat();
+      player.src = item.streamUrl || `/stream/${item.fileId}`;
+      player.load();
+    }
+  }
 });
 
 $('resyncBtn').addEventListener('click', () => {
@@ -630,8 +759,19 @@ document.addEventListener('visibilitychange', () => {
 
 /* ------------------------------ 启动 ------------------------------ */
 
+// 便于远程排查：控制台里可以直接看播放器状态
+globalThis.__appState = state;
+
 (async function boot() {
   try {
+    state.forceCompat =
+      new URLSearchParams(location.search).get('compat') === '1' ||
+      localStorage.getItem('rotator.compat') === '1' ||
+      IS_APPLE_MOBILE;
+    if (state.forceCompat) {
+      const btn = $('compatBtn');
+      if (btn) btn.classList.add('on');
+    }
     const ready = await loadConfig();
     if (ready === false) return;
     await refreshNow(true);

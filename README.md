@@ -36,6 +36,7 @@ WebDAV 媒体库 ──scan──> data/library.json（含每集真实时长）
 | Web 管理界面 | `/admin` 里改配置、勾选番剧、可视化编辑编排、实时预览节目单，改完即生效 |
 | TMDB 元数据 | 封面、简介、评分、播出日期与剧集标题，自动按中文名匹配，也可手动纠正 |
 | 字幕自动加载 | 外挂 `.ass/.srt` 与 MKV 内挂字幕统一转 WebVTT 挂到 `<track>`，可一键开关 |
+| 兼容模式 | MKV 按需转封装成 MP4（视频流复制 + 音频 AAC + `hvc1`），解决 iOS/Safari 完全放不了 MKV 的问题 |
 
 ---
 
@@ -158,6 +159,29 @@ environment:
 内挂字幕第一次加载要把整集读一遍（实测 612 MB 的 MKV 抽取 408 条字幕约 23 秒，取决于 WebDAV 速度），转完写缓存，之后秒开；播放器会在当前一集快播完时**提前预热**下一集的字幕。
 
 **限制**：ASS 的特效、定位、字体样式会丢失（WebVTT 不支持这些），只保留文本与换行；一个 `.ass` 里同时含日中双语的，两种都会显示出来。
+
+---
+
+## 兼容模式（iOS / Safari 放不了 MKV）
+
+iOS / iPadOS 上所有浏览器（Safari、Chrome、"Gear" 等）都是 WebKit 内核，**不支持 MKV 容器**——即使视频轨是 HEVC 也放不出来，表现就是左下角一直转圈。
+
+解决办法是后端按需把 MKV **转封装**成 MP4：
+
+| 项目 | 说明 |
+| --- | --- |
+| 视频 | `-c:v copy`，不重新编码；HEVC 会打上 Apple 要求的 `hvc1` 标签 |
+| 音频 | 转 AAC 192k 立体声（DTS / FLAC / TrueHD 在 iOS 上放不出来） |
+| 容器 | MP4 + `+faststart`（moov 前置，可边下边播） |
+| 缓存 | `data/remux/`，按集缓存，默认上限 20 GB，LRU 淘汰 |
+| 依赖 | 需要带 ffmpeg 的镜像 `:latest-ffmpeg` |
+
+- **自动**：iOS/iPadOS 打开播放器即走兼容模式，先显示「正在转封装… 42%」，完成后无缝播放；
+- **手动**：底栏「兼容模式」按钮可随时切换（桌面端遇到 HEVC 放不出来也可以点）；URL 加 `?compat=1` 也能强制开启；
+- 转封装后的 MP4 支持 Range，拖动与直播同步逻辑和普通文件完全一致；
+- 首次播放某集要等一次转封装，之后秒开。实测 127 MB 约 4 秒、612 MB 约 30 秒。
+
+> 如果你的 iPad 连 MP4 也放不出来（极老机型不支持 HEVC），只能改成 H.264 转码，那会慢很多，需要另外开一个配置项。
 
 ---
 
@@ -441,6 +465,9 @@ if (Math.abs(video.currentTime - target) > 4) video.currentTime = target;  // �
 | POST | `/api/admin/tmdb/test` | 测试 TMDB Key 是否可用 |
 | POST | `/api/admin/series/:id/tmdb` | 手动指定 TMDB ID `{tmdbId}` |
 | GET | `/subtitle/<fileId>` | 该集字幕的 WebVTT（外挂转换 / ffmpeg 抽取，带缓存） |
+| GET | `/api/remux/<fileId>` | 转封装状态 `{state, progress}`（idle/working/ready/error/unavailable） |
+| POST | `/api/remux/<fileId>` | 启动转封装（幂等） |
+| GET | `/stream/<fileId>?format=mp4` | 转封装后的 MP4，支持 Range |
 
 `/api/now` 响应节选：
 
@@ -597,6 +624,8 @@ npm run smoke
 **第一次打开只有「未配置」？** 这是预期行为：现在支持零配置启动，去 `/admin` 填 WebDAV 即可；`docker compose up -d` 不需要任何环境变量。
 
 **怎么给 /admin 加密码？** 设置环境变量 `ADMIN_PASSWORD`，重启后 `/admin` 与 `/api/admin/*` 需要 HTTP Basic 认证。
+
+**iPad 上一只转圈怎么办？** 那是 MKV 容器不被 iOS 支持：换成 `:latest-ffmpeg` 镜像后，播放器会自动走「兼容模式」把 MKV 转封装成 MP4 再播（也可以手动点底栏按钮）。
 
 **镜像名为什么叫 anime-rotator-app？** 早期发布过一个 `ghcr.io/luvhx/anime-rotator` 包，它与被重建前的仓库绑定过，GitHub 不允许新仓库写入同名包，因此改用 `anime-rotator-app`。旧包（v1.0 内容）可以删除。
 

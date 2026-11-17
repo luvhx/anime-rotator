@@ -43,6 +43,12 @@ export const DEFAULT_CONFIG = {
     enabled: true,
     ffmpegPath: 'ffmpeg',
   },
+  // 转封装：MKV → MP4（视频流直接 copy），解决 iOS/Safari 不支持 MKV 的问题
+  remux: {
+    enabled: true,
+    maxBytes: 20 * 1024 ** 3,
+    ffprobePath: 'ffprobe',
+  },
   // TMDB：用于节目封面 / 简介 / 播出信息（留空则纯本地模式）
   tmdb: {
     apiKey: '',

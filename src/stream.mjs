@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import { Readable } from 'node:stream';
 import { encodePath } from './util.mjs';
 
@@ -71,6 +72,41 @@ export function sendRedirect(res, location) {
     'Access-Control-Allow-Origin': '*',
   });
   res.end();
+}
+
+/**
+ * 输出本地文件，支持 Range（用于转封装后的 mp4）
+ */
+export function sendFileWithRange(req, res, filePath, { contentType = 'video/mp4', extraHeaders = {} } = {}) {
+  const stat = fs.statSync(filePath);
+  const size = stat.size;
+  const base = {
+    'Content-Type': contentType,
+    'Accept-Ranges': 'bytes',
+    'Cache-Control': 'no-store',
+    'Access-Control-Allow-Origin': '*',
+    ...extraHeaders,
+  };
+  const range = req.headers.range;
+  if (range) {
+    const m = /bytes=(\d*)-(\d*)/.exec(range);
+    let start = m && m[1] ? Number(m[1]) : 0;
+    let end = m && m[2] ? Number(m[2]) : size - 1;
+    if (!m || Number.isNaN(start) || Number.isNaN(end) || start > end || start >= size) {
+      res.writeHead(416, { ...base, 'Content-Range': `bytes */${size}` });
+      return res.end();
+    }
+    end = Math.min(end, size - 1);
+    res.writeHead(206, {
+      ...base,
+      'Content-Range': `bytes ${start}-${end}/${size}`,
+      'Content-Length': end - start + 1,
+    });
+    fs.createReadStream(filePath, { start, end }).pipe(res);
+    return;
+  }
+  res.writeHead(200, { ...base, 'Content-Length': size });
+  fs.createReadStream(filePath).pipe(res);
 }
 
 /**

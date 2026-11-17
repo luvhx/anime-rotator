@@ -523,3 +523,47 @@ a.ghost.link {
   color: var(--accent-2);
   border-color: rgba(55, 224, 192, 0.45);
 }
+
+.compat-panel {
+  position: absolute;
+  left: 50%;
+  bottom: 56px;
+  transform: translateX(-50%);
+  width: min(460px, 80%);
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: rgba(8, 10, 16, 0.88);
+  border: 1px solid var(--line);
+  backdrop-filter: blur(8px);
+  z-index: 5;
+}
+.compat-panel[hidden] {
+  display: none;
+}
+.compat-panel .cp-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.compat-panel .bar {
+  height: 5px;
+  border-radius: 999px;
+  background: #0e1119;
+  overflow: hidden;
+}
+.compat-panel .bar-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  transition: width 0.4s;
+}
+.compat-panel .cp-sub {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+#compatBtn.on {
+  color: var(--accent-2);
+  border-color: rgba(55, 224, 192, 0.45);
+}

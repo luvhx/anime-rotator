@@ -4,7 +4,7 @@ import path from 'node:path';
 import { WebDavClient } from './webdav.mjs';
 import { Library, DurationCache, scanLibrary } from './library.mjs';
 import { ChannelTimeline, episodeView, RULE_TYPES } from './scheduler.mjs';
-import { buildFileUrl, sendRedirect, proxyFile } from './stream.mjs';
+import { buildFileUrl, sendRedirect, proxyFile, sendFileWithRange } from './stream.mjs';
 import { dayStartMs, localParts, fmtDuration, toMs, clamp, mapLimit } from './util.mjs';
 import {
   applySettings,
@@ -18,6 +18,7 @@ import {
 import { settingsFromConfig, finalizeConfig } from './config.mjs';
 import { TmdbClient } from './tmdb.mjs';
 import { SubtitleService } from './subtitles.mjs';
+import { RemuxService } from './remux.mjs';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -56,6 +57,7 @@ export function createApp(baseConfig) {
     tmdb: null,
     tmdbResolved: new Map(),
     subs: null,
+    remux: null,
     scan: { running: false, stage: null, done: 0, total: 0, extra: '', startedAt: null, finishedAt: null, error: null },
     error: null,
   };
@@ -84,6 +86,15 @@ export function createApp(baseConfig) {
       enabled: cfg.subtitles?.enabled !== false,
     });
     state.subs.detectFfmpeg();
+    state.remux = new RemuxService({
+      dav: state.dav,
+      cacheDir: path.join(path.dirname(cfg.paths.library), 'remux'),
+      ffmpegPath: cfg.subtitles?.ffmpegPath || 'ffmpeg',
+      ffprobePath: cfg.remux?.ffprobePath || 'ffprobe',
+      maxBytes: cfg.remux?.maxBytes || 20 * 1024 ** 3,
+      enabled: cfg.remux?.enabled !== false,
+    });
+    state.remux.detect();
     if (reloadLibrary) {
       if (fs.existsSync(cfg.paths.library)) {
         try {
@@ -160,6 +171,7 @@ export function createApp(baseConfig) {
       endText: clockText(item.endsAt),
       streamUrl: streamUrlOf(ep, opts),
       directUrl: directUrlOf(ep, opts.prefix),
+      mp4Url: `/stream/${ep.fileId}?format=mp4`,
       subtitleUrl: subtitleEnabled() && subtitleKindOf(ep) ? `/subtitle/${ep.fileId}` : null,
       subtitleKind: subtitleEnabled() ? subtitleKindOf(ep) : null,
     };
@@ -349,6 +361,7 @@ export function createApp(baseConfig) {
         timezone: cfg.timezone,
         tmdb: { language: cfg.tmdb.language, enabled: state.tmdb.enabled, mode: state.tmdb.mode, lastError: state.tmdb.lastError },
         subtitles: { enabled: cfg.subtitles?.enabled !== false, ffmpeg: Boolean(state.subs?.ffmpegAvailable) },
+        remux: { enabled: Boolean(state.remux?.ready), cache: state.remux?.stats() || null },
         paths: { library: cfg.paths.library, settings: state.settingsFile },
         library: { fallbackDurationMs: cfg.library.fallbackDurationMs },
       },
@@ -767,6 +780,7 @@ export function createApp(baseConfig) {
           scan: { running: state.scan.running, stage: state.scan.stage, done: state.scan.done, total: state.scan.total },
           tmdb: { enabled: state.tmdb.enabled },
           subtitles: { enabled: subtitleEnabled(), ffmpeg: Boolean(state.subs?.ffmpegAvailable) },
+          remux: { enabled: Boolean(state.remux?.ready), cache: state.remux?.stats() || null },
         });
       }
 
@@ -835,7 +849,34 @@ export function createApp(baseConfig) {
 
       /* ---- 视频流 ---- */
       if (pathname.startsWith('/stream/')) {
-        return apiStream(req, res, url, pathname.slice('/stream/'.length));
+        const fileId0 = pathname.slice('/stream/'.length);
+        if (url.searchParams.get('format') === 'mp4') {
+          const ep = state.library.getEpisode(fileId0);
+          if (!ep) throw new HttpError(404, `未知文件：${fileId0}`);
+          const st = state.remux.status(ep);
+          if (st.state === 'ready') {
+            return sendFileWithRange(req, res, state.remux.fileFor(ep), { contentType: 'video/mp4' });
+          }
+          if (st.state === 'working' || st.state === 'idle') {
+            state.remux.start(ep);
+            res.writeHead(202, { 'Retry-After': '5', 'Content-Type': 'application/json; charset=utf-8' });
+            return res.end(JSON.stringify({ state: 'working', progress: st.progress || 0 }));
+          }
+          if (st.state === 'unavailable') throw new HttpError(501, st.reason || '当前镜像没有 ffmpeg，无法转封装');
+          if (st.state === 'disabled') throw new HttpError(404, '转封装功能已关闭');
+          throw new HttpError(500, st.error || '转封装失败');
+        }
+        return apiStream(req, res, url, fileId0);
+      }
+
+      /* ---- 转封装任务 ---- */
+      if (pathname.startsWith('/api/remux/')) {
+        const fileId = pathname.slice('/api/remux/'.length);
+        const ep = state.library.getEpisode(fileId);
+        if (!ep) throw new HttpError(404, `未知文件：${fileId}`);
+        if (req.method === 'POST') state.remux.start(ep);
+        const st = state.remux.status(ep);
+        return json(res, { fileId, ...st, cache: state.remux.stats() });
       }
 
       if (pathname.startsWith('/api/')) throw new HttpError(404, `未知接口：${pathname}`);

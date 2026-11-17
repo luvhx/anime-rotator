@@ -95,6 +95,19 @@ const localStorage = {
 
 globalThis.document = document;
 globalThis.localStorage = localStorage;
+// Node 自带只读的 navigator，测试里用 defineProperty 覆盖成 iPad / 桌面 UA
+const IS_COMPAT = process.env.SMOKE_COMPAT === '1';
+Object.defineProperty(globalThis, 'navigator', {
+  configurable: true,
+  writable: true,
+  value: {
+    userAgent: IS_COMPAT
+      ? 'Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
+      : 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36',
+    platform: IS_COMPAT ? 'iPad' : 'Linux x86_64',
+    maxTouchPoints: IS_COMPAT ? 5 : 0,
+  },
+});
 globalThis.location = { search: '', href: BASE + '/' };
 const realFetch = globalThis.fetch;
 globalThis.fetch = (url, init) => {
@@ -126,7 +139,16 @@ log(q('modeBadge').textContent.length > 0, '流模式徽标', q('modeBadge').tex
 
 // 点击开播
 q('startBtn').dispatch('click');
-await wait(1500);
+if (process.env.SMOKE_COMPAT === '1') {
+  // 兼容模式：等待后端把 MKV 转封装成 MP4
+  for (let i = 0; i < 90; i++) {
+    if (String(player.src).includes('format=mp4') && player.readyState >= 1) break;
+    await wait(1000);
+  }
+  log(String(player.src).includes('format=mp4'), '自动切到 MP4 转封装', String(player.src).slice(0, 60));
+} else {
+  await wait(1500);
+}
 
 log(!!player.src, '播放器已设置 src', player.src);
 log(!q('overlay').classList.contains('hidden') === false, '开始后隐藏遮罩');
