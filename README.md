@@ -1,4 +1,4 @@
-# 媒体轮播 · Anime Rotator
+# 媒体轮播 · Media Rotator
 
 [![build](https://github.com/luvhx/media-rotator/actions/workflows/build.yml/badge.svg)](https://github.com/luvhx/media-rotator/actions/workflows/build.yml)
 
