@@ -161,6 +161,17 @@ function buildDraft(state) {
     timezone: st.timezone ?? cfg.timezone,
     tmdb: { apiKey: '', readToken: '', language: st.tmdb?.language ?? cfg.tmdb.language },
     subtitles: { enabled: st.subtitles?.enabled ?? cfg.subtitles?.enabled !== false },
+    compat: {
+      publish: st.compat?.publish ?? cfg.compat?.publish ?? 'local',
+      keepLocal: st.compat?.keepLocal ?? cfg.compat?.keepLocal ?? true,
+      urlPrefix: st.compat?.urlPrefix ?? cfg.compat?.urlPrefix ?? '',
+      webdav: {
+        baseUrl: st.compat?.webdav?.baseUrl ?? cfg.compat?.webdav?.baseUrl ?? '',
+        root: st.compat?.webdav?.root ?? cfg.compat?.webdav?.root ?? 'compat',
+        username: st.compat?.webdav?.username ?? cfg.compat?.webdav?.username ?? '',
+        password: '',
+      },
+    },
     channels,
     selection: normalizeSelection(st.selection ?? state.selection),
   };
@@ -327,6 +338,22 @@ function fillConfigForm() {
   $('#cfg-timezone').value = d.timezone || 'Asia/Shanghai';
   $('#cfg-tmdb-lang').value = d.tmdb.language || 'zh-CN';
   $('#cfg-subs').checked = S.draft.subtitles?.enabled !== false;
+  const compat = S.draft.compat || {};
+  $('#cfg-compat-publish').value = compat.publish || 'local';
+  $('#cfg-compat-root').value = compat.webdav?.root || 'compat';
+  $('#cfg-compat-prefix').value = compat.urlPrefix || '';
+  $('#cfg-compat-keeplocal').checked = compat.keepLocal !== false;
+  $('#cfg-compat-baseUrl').value = compat.webdav?.baseUrl || '';
+  $('#cfg-compat-username').value = compat.webdav?.username || '';
+  $('#cfg-compat-password').value = '';
+  $('#cfg-compat-password').placeholder = S.state.config.compat?.webdav?.passwordSet ? '已设置，留空则不修改' : '可选';
+  const cHint = $('#compatHint');
+  if (cHint && S.state.config.compat) {
+    const c = S.state.config.compat;
+    cHint.textContent = c.active
+      ? `当前已启用：产物目录 ${c.store?.root || 'compat'}，302 前缀 ${c.store?.urlPrefix || '(未设置)'}；已发布 ${S.state.remux?.cache?.published ?? 0} 集`
+      : '产物先落本地立即可播；选「上传到 WebDAV」后会在后台上传，完成后客户端 302 直连 CDN。';
+  }
   const subsHint = $('#subsHint');
   if (subsHint && S.state.config.subtitles) {
     const ff = S.state.config.subtitles.ffmpeg;
@@ -371,6 +398,29 @@ function bindConfigForm() {
     S.draft.subtitles = { enabled: e.target.checked };
     markDirty('config');
   });
+
+  const readCompat = () => {
+    S.draft.compat = {
+      ...(S.draft.compat || {}),
+      publish: $('#cfg-compat-publish').value,
+      keepLocal: $('#cfg-compat-keeplocal').checked,
+      urlPrefix: $('#cfg-compat-prefix').value.trim(),
+      webdav: {
+        ...(S.draft.compat?.webdav || {}),
+        baseUrl: $('#cfg-compat-baseUrl').value.trim(),
+        root: $('#cfg-compat-root').value.trim() || 'compat',
+        username: $('#cfg-compat-username').value.trim(),
+      },
+    };
+    const pass = $('#cfg-compat-password').value;
+    if (pass) S.draft.compat.webdav.password = pass;
+    markDirty('config');
+  };
+  for (const id of ['cfg-compat-publish', 'cfg-compat-root', 'cfg-compat-prefix', 'cfg-compat-baseUrl', 'cfg-compat-username', 'cfg-compat-password']) {
+    $(`#${id}`).addEventListener('input', readCompat);
+  }
+  $('#cfg-compat-publish').addEventListener('change', readCompat);
+  $('#cfg-compat-keeplocal').addEventListener('change', readCompat);
 
   $('#btnTmdbTest').addEventListener('click', async () => {
     const btn = $('#btnTmdbTest');
@@ -972,6 +1022,7 @@ async function saveAll() {
     timezone: S.draft.timezone,
     tmdb: { language: S.draft.tmdb.language },
     subtitles: { enabled: S.draft.subtitles?.enabled !== false },
+    compat: S.draft.compat,
     channels: S.draft.channels,
     selection: S.draft.selection,
   };

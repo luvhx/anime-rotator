@@ -183,6 +183,28 @@ iOS / iPadOS 上所有浏览器（Safari、Chrome、"Gear" 等）都是 WebKit �
 
 > 如果你的 iPad 连 MP4 也放不出来（极老机型不支持 HEVC），只能改成 H.264 转码，那会慢很多，需要另外开一个配置项。
 
+
+### 产物发布到 WebDAV（原片与产物可以用不同服务）
+
+`compat.publish = "webdav"` 时，转封装产物会：
+
+1. 先落本地 `data/remux/` —— **立即可播**，不用等上传；
+2. 后台上传到（可以与原片不同的）WebDAV；
+3. 直链探测通过后，`/stream/<id>?format=mp4` 直接 **302** 到 CDN，后端零带宽。
+
+| 配置 | 说明 |
+| --- | --- |
+| `compat.publish` | `local`（默认，只存本地）/ `webdav`（上传 + 302） |
+| `compat.webdav.baseUrl` / `root` / `username` / `password` | 独立的写入目标；`baseUrl` 留空 = 复用主 WebDAV |
+| `compat.urlPrefix` | 独立的 302 前缀；留空 = 沿用 `stream.urlPrefix` |
+| `compat.keepLocal` | 上传后是否保留本地副本（默认保留，回源更快） |
+
+产物路径：`compat/<系列>/<原文件名>.mp4` —— **在扫描根目录之外**，不会被 scan 当成新剧集。
+
+> **关于直链延迟**：OpenList/115 对「刚上传」的文件可能暂时返回 5xx（直链还没索引）。所以上传成功后会先 `HEAD` 探测直链，通了才标记 `published` 切 302；不通就继续走本地服务，下次请求自动重试。
+
+实测：20 MB 上传 0.74 秒（28.4 MB/s）、读回 39.6 MB/s。
+
 ---
 
 ## Docker 部署
@@ -465,9 +487,9 @@ if (Math.abs(video.currentTime - target) > 4) video.currentTime = target;  // �
 | POST | `/api/admin/tmdb/test` | 测试 TMDB Key 是否可用 |
 | POST | `/api/admin/series/:id/tmdb` | 手动指定 TMDB ID `{tmdbId}` |
 | GET | `/subtitle/<fileId>` | 该集字幕的 WebVTT（外挂转换 / ffmpeg 抽取，带缓存） |
-| GET | `/api/remux/<fileId>` | 转封装状态 `{state, progress}`（idle/working/ready/error/unavailable） |
+| GET | `/api/remux/<fileId>` | 转封装状态 `{state, playable, directUrl, uploadProgress}`（idle/working/ready/uploading/published/error/unavailable） |
 | POST | `/api/remux/<fileId>` | 启动转封装（幂等） |
-| GET | `/stream/<fileId>?format=mp4` | 转封装后的 MP4，支持 Range |
+| GET | `/stream/<fileId>?format=mp4` | 转封装后的 MP4：已发布则 302 到 WebDAV，否则本地流（Range）；`&local=1` 强制本地 |
 
 `/api/now` 响应节选：
 

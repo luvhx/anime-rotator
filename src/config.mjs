@@ -49,6 +49,19 @@ export const DEFAULT_CONFIG = {
     maxBytes: 20 * 1024 ** 3,
     ffprobePath: 'ffprobe',
   },
+  // 兼容产物发布：local 只存本地；webdav 上传到（可与原片不同的）WebDAV，之后 302 直连
+  compat: {
+    publish: 'local',
+    keepLocal: true,
+    urlPrefix: '',
+    webdav: {
+      baseUrl: '',
+      root: 'compat',
+      username: '',
+      password: '',
+      timeoutMs: 120000,
+    },
+  },
   // TMDB：用于节目封面 / 简介 / 播出信息（留空则纯本地模式）
   tmdb: {
     apiKey: '',

@@ -8,8 +8,10 @@ import { spawn } from 'node:child_process';
  * iOS / iPadOS 的 Safari（以及 iOS 上所有浏览器）**不支持 MKV 容器**，
  * 哪怕里面的视频轨是 HEVC 也放不出来，表现就是一直转圈。
  *
- * 这里用 ffmpeg 把 MKV 无损转封装成 MP4（视频流 direct copy，音频转 AAC），
- * 结果按集缓存到 data/remux/，之后和普通 mp4 一样支持 Range 拖动。
+ * 这里用 ffmpeg 把 MKV 无损转封装成 MP4（视频流 direct copy，音频转 AAC）：
+ *   - 产物先落本地 data/remux/，立即可播
+ *   - 配置了 CompatStore 时，后台把产物上传到（可以是另一套的）WebDAV，
+ *     上传完成后客户端直接 302 走 CDN，后端不再搬流量
  *
  * 注意：
  *  - 只转封装不转码，CPU 占用很低，耗时基本等于「读一遍 + 写一遍」
@@ -24,6 +26,7 @@ export class RemuxService {
    * @param {object} opts
    * @param {import('./webdav.mjs').WebDavClient} opts.dav
    * @param {string} opts.cacheDir
+   * @param {import('./compat-store.mjs').CompatStore} [opts.store]
    * @param {string} [opts.ffmpegPath]
    * @param {string} [opts.ffprobePath]
    * @param {number} [opts.maxBytes]
@@ -32,6 +35,7 @@ export class RemuxService {
   constructor({
     dav,
     cacheDir,
+    store = null,
     ffmpegPath = 'ffmpeg',
     ffprobePath = 'ffprobe',
     maxBytes = 20 * GB,
@@ -39,6 +43,7 @@ export class RemuxService {
   } = {}) {
     this.dav = dav;
     this.cacheDir = cacheDir;
+    this.store = store;
     this.ffmpegPath = ffmpegPath;
     this.ffprobePath = ffprobePath;
     this.maxBytes = maxBytes;
@@ -46,11 +51,19 @@ export class RemuxService {
     this.available = false;
     this.checked = false;
     this.jobs = new Map();
+    this.uploads = new Map();
+    this.published = new Map(); // fileId -> { relPath, directUrl, bytes } —— 直链已验证可用
+    this.uploaded = new Map(); // fileId -> { relPath, directUrl } —— 已上传，直链待验证
+    this.remoteChecked = new Set();
     this.queue = Promise.resolve();
   }
 
   get ready() {
     return this.enabled && this.available;
+  }
+
+  setStore(store) {
+    this.store = store;
   }
 
   async detect() {
@@ -83,27 +96,58 @@ export class RemuxService {
     return path.join(this.cacheDir, `${ep.fileId}-${ep.size}.mp4`);
   }
 
+  /** 远端是否已有（每个进程生命周期只查一次） */
+  async refresh(ep) {
+    if (!this.store) return;
+    if (this.published.has(ep.fileId) || this.remoteChecked.has(ep.fileId)) return;
+    this.remoteChecked.add(ep.fileId);
+    try {
+      if (await this.store.exists(ep)) {
+        this.published.set(ep.fileId, { relPath: this.store.relPathFor(ep), directUrl: this.store.directUrl(ep) });
+      }
+    } catch {
+      /* 远端不可用就当没有 */
+    }
+  }
+
   /** 查询状态 */
   status(ep) {
-    if (!this.enabled) return { state: 'disabled' };
+    if (!this.enabled) return { state: 'disabled', playable: false };
+    const remote = this.published.get(ep.fileId);
+    if (remote) {
+      return { state: 'published', playable: true, directUrl: remote.directUrl, relPath: remote.relPath };
+    }
+    const upload = this.uploads.get(ep.fileId);
+    if (upload && upload.state === 'uploading') {
+      return { state: 'uploading', playable: true, progress: upload.progress, uploadProgress: upload.progress };
+    }
     const file = this.fileFor(ep);
     try {
       const st = fs.statSync(file);
-      if (st.size > 0) return { state: 'ready', bytes: st.size };
+      if (st.size > 0) return { state: 'ready', playable: true, bytes: st.size, uploadError: upload?.error || null };
     } catch {
       /* 未缓存 */
     }
-    if (!this.available) return { state: 'unavailable', reason: '当前镜像没有 ffmpeg，请使用 :latest-ffmpeg 镜像' };
+    if (!this.available) return { state: 'unavailable', playable: false, reason: '当前镜像没有 ffmpeg，请使用 :latest-ffmpeg 镜像' };
     const job = this.jobs.get(ep.fileId);
-    if (job) return { state: job.state, progress: job.progress, bytes: job.bytes, error: job.error };
-    return { state: 'idle' };
+    if (job) return { state: job.state, playable: false, progress: job.progress, bytes: job.bytes, error: job.error };
+    return { state: 'idle', playable: false };
   }
 
-  /** 启动（幂等） */
+  /** 启动（幂等）：远端已有 → 直接 published；本地已有 → 只补上传 */
   start(ep) {
-    if (!this.ready) return this.status(ep);
-    const cached = this.status(ep);
-    if (cached.state === 'ready') return cached;
+    const st = this.status(ep);
+    // 已上传但直链还不可用：只重试验证，不重复上传
+    if (this.uploaded.has(ep.fileId) && !this.published.has(ep.fileId)) {
+      this.#verifyAndPublish(ep, this.uploaded.get(ep.fileId));
+      return st;
+    }
+    // 本地已有产物：即使没有 ffmpeg，也要把上传补上
+    if (st.playable) {
+      if (st.state === 'ready') this.#publishInBackground(ep);
+      return st;
+    }
+    if (!this.ready) return st;
     if (this.jobs.has(ep.fileId)) return this.status(ep);
 
     const job = { state: 'working', progress: 0, bytes: 0, error: null, startedAt: Date.now() };
@@ -114,10 +158,7 @@ export class RemuxService {
         job.state = 'error';
         job.error = err.message;
       })
-      .finally(() => {
-        // 保留一段时间让前端读到结果，再清理
-        setTimeout(() => this.jobs.delete(ep.fileId), 60000);
-      });
+      .finally(() => setTimeout(() => this.jobs.delete(ep.fileId), 60000));
     return this.status(ep);
   }
 
@@ -176,6 +217,68 @@ export class RemuxService {
     job.progress = 1;
     job.bytes = fs.statSync(out).size;
     this.#evict();
+    this.#publishInBackground(ep);
+  }
+
+  /** 后台上传，不阻塞播放 */
+  #publishInBackground(ep) {
+    if (!this.store || this.published.has(ep.fileId)) return;
+    if (this.uploads.get(ep.fileId)?.state === 'uploading') return;
+    const local = this.fileFor(ep);
+    if (!fs.existsSync(local)) return;
+
+    const upload = { state: 'uploading', progress: 0, error: null, startedAt: Date.now() };
+    this.uploads.set(ep.fileId, upload);
+    this.store
+      .upload(ep, local, {
+        onProgress: (sent, total) => {
+          upload.progress = total ? sent / total : 0;
+        },
+      })
+      .then((r) => {
+        this.uploaded.set(ep.fileId, r);
+        return this.#verifyAndPublish(ep, r).then((ok) => {
+          upload.state = ok ? 'done' : 'pending-verify';
+          if (!ok) upload.error = '已上传，但直链暂不可用（OpenList 可能还没索引新文件），继续走本地';
+          if (ok && !this.store.keepLocal) {
+            try {
+              fs.unlinkSync(local);
+            } catch {
+              /* ignore */
+            }
+          }
+        });
+      })
+      .catch((err) => {
+        upload.state = 'error';
+        upload.error = err.message;
+      });
+  }
+
+  /**
+   * 上传成功 ≠ 直链可用：OpenList/115 对刚上传的文件可能暂时返回 5xx。
+   * 只有 HEAD 探测通过才标记 published，否则继续走本地服务。
+   */
+  async #verifyAndPublish(ep, remote) {
+    if (!remote?.directUrl) return false;
+    try {
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), 15000);
+      const res = await fetch(remote.directUrl, { method: 'GET', headers: { Range: 'bytes=0-1' }, signal: ac.signal });
+      clearTimeout(timer);
+      const ok = res.ok || res.status === 206 || res.status === 302 || res.status === 307;
+      if (ok) {
+        this.published.set(ep.fileId, remote);
+        const upload = this.uploads.get(ep.fileId);
+        if (upload) {
+          upload.state = 'done';
+          upload.error = null;
+        }
+      }
+      return ok;
+    } catch {
+      return false;
+    }
   }
 
   async #probeCodec(ep) {
@@ -269,7 +372,6 @@ export class RemuxService {
     }
   }
 
-  /** 统计缓存占用 */
   stats() {
     let count = 0;
     let bytes = 0;
@@ -286,6 +388,13 @@ export class RemuxService {
     } catch {
       /* 目录还不存在 */
     }
-    return { count, bytes, maxBytes: this.maxBytes, available: this.available };
+    return {
+      count,
+      bytes,
+      maxBytes: this.maxBytes,
+      available: this.available,
+      published: this.published.size,
+      uploads: [...this.uploads.values()].filter((u) => u.state === 'uploading').length,
+    };
   }
 }

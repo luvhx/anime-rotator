@@ -19,6 +19,7 @@ import { settingsFromConfig, finalizeConfig } from './config.mjs';
 import { TmdbClient } from './tmdb.mjs';
 import { SubtitleService } from './subtitles.mjs';
 import { RemuxService } from './remux.mjs';
+import { CompatStore } from './compat-store.mjs';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -58,6 +59,7 @@ export function createApp(baseConfig) {
     tmdbResolved: new Map(),
     subs: null,
     remux: null,
+    compat: null,
     scan: { running: false, stage: null, done: 0, total: 0, extra: '', startedAt: null, finishedAt: null, error: null },
     error: null,
   };
@@ -95,6 +97,19 @@ export function createApp(baseConfig) {
       enabled: cfg.remux?.enabled !== false,
     });
     state.remux.detect();
+    const compatCfg = cfg.compat || {};
+    if (compatCfg.publish === 'webdav') {
+      const compatDav = compatCfg.webdav?.baseUrl ? new WebDavClient(compatCfg.webdav) : state.dav;
+      state.compat = new CompatStore({
+        dav: compatDav,
+        root: compatCfg.webdav?.root || 'compat',
+        urlPrefix: compatCfg.urlPrefix || cfg.stream.urlPrefix || cfg.webdav.baseUrl,
+        keepLocal: compatCfg.keepLocal !== false,
+      });
+    } else {
+      state.compat = null;
+    }
+    if (state.remux) state.remux.setStore(state.compat);
     if (reloadLibrary) {
       if (fs.existsSync(cfg.paths.library)) {
         try {
@@ -362,6 +377,20 @@ export function createApp(baseConfig) {
         tmdb: { language: cfg.tmdb.language, enabled: state.tmdb.enabled, mode: state.tmdb.mode, lastError: state.tmdb.lastError },
         subtitles: { enabled: cfg.subtitles?.enabled !== false, ffmpeg: Boolean(state.subs?.ffmpegAvailable) },
         remux: { enabled: Boolean(state.remux?.ready), cache: state.remux?.stats() || null },
+        compat: {
+          publish: cfg.compat?.publish || 'local',
+          keepLocal: cfg.compat?.keepLocal !== false,
+          urlPrefix: cfg.compat?.urlPrefix || '',
+          webdav: {
+            baseUrl: cfg.compat?.webdav?.baseUrl || '',
+            root: cfg.compat?.webdav?.root || 'compat',
+            username: cfg.compat?.webdav?.username || '',
+            passwordSet: Boolean(cfg.compat?.webdav?.password),
+            usingMain: !cfg.compat?.webdav?.baseUrl,
+          },
+          active: Boolean(state.compat),
+          store: state.compat ? { root: state.compat.root, urlPrefix: state.compat.urlPrefix } : null,
+        },
         paths: { library: cfg.paths.library, settings: state.settingsFile },
         library: { fallbackDurationMs: cfg.library.fallbackDurationMs },
       },
@@ -433,6 +462,15 @@ export function createApp(baseConfig) {
     }
     if (incoming.channels) next.channels = incoming.channels;
     if (incoming.subtitles) next.subtitles = { ...(cur.subtitles || {}), ...incoming.subtitles };
+    if (incoming.compat) {
+      next.compat = { ...(cur.compat || {}), ...incoming.compat };
+      next.compat.webdav = { ...(cur.compat?.webdav || {}), ...(incoming.compat.webdav || {}) };
+      if (!incoming.compat.webdav?.password) {
+        const keep = cur.compat?.webdav?.password || state.config.compat?.webdav?.password;
+        if (keep) next.compat.webdav.password = keep;
+        else delete next.compat.webdav.password;
+      }
+    }
 
     const before = state.config.webdav;
     saveSettings(state.settingsFile, next);
@@ -781,6 +819,10 @@ export function createApp(baseConfig) {
           tmdb: { enabled: state.tmdb.enabled },
           subtitles: { enabled: subtitleEnabled(), ffmpeg: Boolean(state.subs?.ffmpegAvailable) },
           remux: { enabled: Boolean(state.remux?.ready), cache: state.remux?.stats() || null },
+          compat: {
+            publish: state.config.compat?.publish || 'local',
+            store: state.compat ? { root: state.compat.root, urlPrefix: state.compat.urlPrefix } : null,
+          },
         });
       }
 
@@ -853,14 +895,27 @@ export function createApp(baseConfig) {
         if (url.searchParams.get('format') === 'mp4') {
           const ep = state.library.getEpisode(fileId0);
           if (!ep) throw new HttpError(404, `未知文件：${fileId0}`);
+          await state.remux.refresh(ep);
           const st = state.remux.status(ep);
-          if (st.state === 'ready') {
-            return sendFileWithRange(req, res, state.remux.fileFor(ep), { contentType: 'video/mp4' });
+          const wantLocal = url.searchParams.get('local') === '1';
+
+          // 已上传到 WebDAV：直接 302 走 CDN，后端零带宽
+          if (st.state === 'published' && st.directUrl && !wantLocal) {
+            return sendRedirect(res, st.directUrl);
           }
-          if (st.state === 'working' || st.state === 'idle') {
+          // 本地有产物就本地发（上传中也可以播）
+          if (st.playable) {
+            const local = state.remux.fileFor(ep);
+            if (fs.existsSync(local)) {
+              return sendFileWithRange(req, res, local, { contentType: 'video/mp4' });
+            }
+            if (st.directUrl) return sendRedirect(res, st.directUrl);
+          }
+          if (st.state === 'published' && st.directUrl) return sendRedirect(res, st.directUrl);
+          if (st.state === 'working' || st.state === 'idle' || st.state === 'uploading') {
             state.remux.start(ep);
             res.writeHead(202, { 'Retry-After': '5', 'Content-Type': 'application/json; charset=utf-8' });
-            return res.end(JSON.stringify({ state: 'working', progress: st.progress || 0 }));
+            return res.end(JSON.stringify({ state: st.state, progress: st.progress || 0 }));
           }
           if (st.state === 'unavailable') throw new HttpError(501, st.reason || '当前镜像没有 ffmpeg，无法转封装');
           if (st.state === 'disabled') throw new HttpError(404, '转封装功能已关闭');
@@ -874,6 +929,7 @@ export function createApp(baseConfig) {
         const fileId = pathname.slice('/api/remux/'.length);
         const ep = state.library.getEpisode(fileId);
         if (!ep) throw new HttpError(404, `未知文件：${fileId}`);
+        await state.remux.refresh(ep);
         if (req.method === 'POST') state.remux.start(ep);
         const st = state.remux.status(ep);
         return json(res, { fileId, ...st, cache: state.remux.stats() });

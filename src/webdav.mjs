@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import { Readable, Transform } from 'node:stream';
 import { joinUrl } from './util.mjs';
 
 /**
@@ -112,6 +114,66 @@ export class WebDavClient {
       return Buffer.concat(chunks);
     }
     throw new Error(`Range 读取失败 ${res.status} @ ${relPath}`);
+  }
+
+  /** 建目录（已存在视为成功） */
+  async mkcol(relPath) {
+    const res = await this.#fetch(this.url(relPath), { method: 'MKCOL', headers: this.headers() });
+    if ([201, 200, 204, 405].includes(res.status)) return true;
+    if (res.status === 409) {
+      // 父目录不存在：递归建
+      const parent = relPath.split('/').slice(0, -1).join('/');
+      if (parent) await this.mkcol(parent);
+      const retry = await this.#fetch(this.url(relPath), { method: 'MKCOL', headers: this.headers() });
+      return [201, 200, 204, 405].includes(retry.status);
+    }
+    throw new Error(`MKCOL 失败 ${res.status} ${res.statusText} @ ${relPath}`);
+  }
+
+  /** 探测文件是否存在（HEAD） */
+  async stat(relPath) {
+    const res = await this.#fetch(this.url(relPath), { method: 'HEAD', headers: this.headers() }, { retries: 1 });
+    if (res.status === 404) return { exists: false, size: 0 };
+    if (!res.ok) return { exists: false, size: 0, status: res.status };
+    const len = Number(res.headers.get('content-length') || 0);
+    return { exists: len > 0, size: len };
+  }
+
+  /**
+   * 上传本地文件（流式，带进度回调）
+   * @returns {Promise<{bytes:number}>}
+   */
+  async putFile(relPath, filePath, { onProgress = null } = {}) {
+    const stat = fs.statSync(filePath);
+    const total = stat.size;
+    let sent = 0;
+    const counter = new Transform({
+      transform(chunk, _enc, cb) {
+        sent += chunk.length;
+        if (onProgress) onProgress(sent, total);
+        cb(null, chunk);
+      },
+    });
+    const body = Readable.toWeb(fs.createReadStream(filePath).pipe(counter));
+    const res = await this.#fetch(
+      this.url(relPath),
+      {
+        method: 'PUT',
+        headers: this.headers({ 'Content-Type': 'video/mp4', 'Content-Length': String(total) }),
+        body,
+        duplex: 'half',
+      },
+      { retries: 1 },
+    );
+    if (!res.ok) throw new Error(`PUT 失败 ${res.status} ${res.statusText} @ ${relPath}`);
+    return { bytes: total };
+  }
+
+  /** 删除文件 */
+  async delete(relPath) {
+    const res = await this.#fetch(this.url(relPath), { method: 'DELETE', headers: this.headers() }, { retries: 1 });
+    if (![200, 204, 404].includes(res.status)) throw new Error(`DELETE 失败 ${res.status} @ ${relPath}`);
+    return true;
   }
 
   /** 发一个 HEAD/GET 探测（用于 stream 代理模式） */

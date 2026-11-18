@@ -100,6 +100,27 @@
         </div>
 
         <div class="panel">
+          <div class="panel-head"><h2>兼容产物（MKV → MP4 转封装）</h2></div>
+          <div class="form-grid">
+            <label>发布方式
+              <select id="cfg-compat-publish">
+                <option value="local">只存本地（走 /stream 代理）</option>
+                <option value="webdav">上传到 WebDAV（之后 302 直连）</option>
+              </select>
+            </label>
+            <label>产物目录 <input id="cfg-compat-root" placeholder="compat" /></label>
+            <label>302 前缀 <input id="cfg-compat-prefix" placeholder="留空 = 沿用上面的 URL 前缀" /></label>
+            <label class="check inline"><input type="checkbox" id="cfg-compat-keeplocal" /> 上传后保留本地副本</label>
+          </div>
+          <div class="form-grid mt">
+            <label>目标 WebDAV 地址 <input id="cfg-compat-baseUrl" placeholder="留空 = 复用主 WebDAV" /></label>
+            <label>目标账号 <input id="cfg-compat-username" placeholder="留空 = 复用主账号" /></label>
+            <label>目标密码 <input id="cfg-compat-password" type="password" placeholder="留空则不修改" /></label>
+          </div>
+          <p class="hint" id="compatHint">产物先落本地立即可播，再后台上传；上传完成后客户端直接 302 到 CDN，后端零带宽。</p>
+        </div>
+
+        <div class="panel">
           <div class="panel-head"><h2>时区与 TMDB</h2></div>
           <div class="form-grid">
             <label>时区 <input id="cfg-timezone" list="tzList" placeholder="Asia/Shanghai" /> </label>

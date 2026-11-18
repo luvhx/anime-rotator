@@ -53,6 +53,15 @@ export function applySettings(baseConfig, settings = {}) {
   if (settings.timezone) cfg.timezone = settings.timezone;
   if (settings.tmdb) cfg.tmdb = { ...(cfg.tmdb || {}), ...pick(settings.tmdb, ['apiKey', 'readToken', 'language']) };
   if (settings.subtitles) cfg.subtitles = { ...(cfg.subtitles || {}), ...pick(settings.subtitles, ['enabled']) };
+  if (settings.compat) {
+    const compat = structuredClone(settings.compat);
+    const webdav = pick(compat.webdav, ['baseUrl', 'root', 'username', 'password', 'timeoutMs']);
+    cfg.compat = {
+      ...(cfg.compat || {}),
+      ...pick(compat, ['publish', 'keepLocal', 'urlPrefix']),
+      webdav: { ...(cfg.compat?.webdav || {}), ...webdav },
+    };
+  }
   if (Array.isArray(settings.channels) && settings.channels.length > 0) cfg.channels = structuredClone(settings.channels);
   cfg.selection = normalizeSelection(settings.selection, cfg.selection);
   return cfg;
@@ -128,6 +137,25 @@ export function validateSettings(settings, { baseConfig, timezone } = {}) {
     throw new Error('subtitles.enabled 必须是布尔值');
   }
 
+  if (settings.compat) {
+    const c = settings.compat;
+    if (c.publish && !['local', 'webdav'].includes(c.publish)) throw new Error('compat.publish 只能是 local 或 webdav');
+    if (c.webdav?.baseUrl) {
+      try {
+        new URL(String(c.webdav.baseUrl));
+      } catch {
+        throw new Error(`兼容产物的 WebDAV 地址不合法：${c.webdav.baseUrl}`);
+      }
+    }
+    if (c.urlPrefix) {
+      try {
+        if (!/^\//.test(String(c.urlPrefix))) new URL(String(c.urlPrefix));
+      } catch {
+        throw new Error(`兼容产物 302 前缀不合法：${c.urlPrefix}`);
+      }
+    }
+  }
+
   if (settings.selection) {
     if (settings.selection.mode && !['all', 'include'].includes(settings.selection.mode)) {
       throw new Error('选片模式只能是 all 或 include');
@@ -195,6 +223,10 @@ export function publicSettings(settings = {}) {
     out.tmdb.readTokenSet = Boolean(out.tmdb.readToken);
     delete out.tmdb.apiKey;
     delete out.tmdb.readToken;
+  }
+  if (out.compat?.webdav?.password) {
+    out.compat.webdav.passwordSet = true;
+    delete out.compat.webdav.password;
   }
   if (out.stream?.token) {
     out.stream.tokenSet = true;
