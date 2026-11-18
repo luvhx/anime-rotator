@@ -209,7 +209,7 @@ iOS / iPadOS 上所有浏览器（Safari、Chrome、"Gear" 等）都是 WebKit �
 
 ## Docker 部署
 
-镜像：`ghcr.io/luvhx/media-rotator`（`latest` / `1.2.0` / `main`，linux/amd64 + linux/arm64，压缩后约 59 MB，零依赖，**公开可匿名拉取**）
+镜像：`ghcr.io/luvhx/media-rotator`（`latest` / `2.0.0` / `main`，linux/amd64 + linux/arm64，压缩后约 59 MB，零依赖，**公开可匿名拉取**）
 
 另有自带 ffmpeg 的变体 `ghcr.io/luvhx/media-rotator:latest-ffmpeg`（+约 50 MB），用于抽取 MKV 内挂字幕。
 
@@ -641,6 +641,8 @@ npm run smoke
 
 **配置存在哪？改了要重启吗？** 存在 `data/settings.json`（Web UI 保存的），优先级高于配置文件与环境变量。保存后立即生效：时间轴重建、播放器下一次轮询自动切换，不用重启。
 
+**转封装是自动的吗？** 是。服务端每隔 20 秒检查一次节目单，把「正在播」和「下一集」提前转好并上传；已转好的直接跳过，客户端打开即播。上限用 `remux.maxFiles/maxBytes`（本地）与 `compat.maxFiles/maxBytes`（远端）控制，默认 0 = 不限制。
+
 **不配 TMDB 能用吗？** 能。没有 Key 时只是没有封面/简介，编排、播放、节目单都正常。
 
 **第一次打开只有「未配置」？** 这是预期行为：现在支持零配置启动，去 `/admin` 填 WebDAV 即可；`docker compose up -d` 不需要任何环境变量。
@@ -649,7 +651,6 @@ npm run smoke
 
 **iPad 上一只转圈怎么办？** 那是 MKV 容器不被 iOS 支持：换成 `:latest-ffmpeg` 镜像后，播放器会自动走「兼容模式」把 MKV 转封装成 MP4 再播（也可以手动点底栏按钮）。
 
-**镜像名为什么叫 media-rotator？** 早期发布过一个 `ghcr.io/luvhx/media-rotator` 包，它与被重建前的仓库绑定过，GitHub 不允许新仓库写入同名包，因此改用 `media-rotator`。旧包（v1.0 内容）可以删除。
 
 ---
 
