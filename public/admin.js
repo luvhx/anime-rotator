@@ -141,6 +141,7 @@ function buildDraft(state) {
         name: c.name,
         description: c.description,
         mode: c.mode,
+      dayStart: c.dayStart || '00:00',
         anchor: c.anchor,
         program: clone(c.program),
       }));
@@ -699,6 +700,16 @@ function renderChannelEditor() {
       ),
       el('label', {}, '描述', el('input', { value: ch.description || '', oninput: (e) => { ch.description = e.target.value; markDirty('channels'); } })),
       el('label', {}, '时间轴锚点（loop 模式的起点）', el('input', { value: toLocalInput(ch.anchor), type: 'datetime-local', onchange: (e) => { ch.anchor = new Date(e.target.value).toISOString(); markDirty('channels'); } })),
+      ch.mode === 'daily'
+        ? el('label', {}, '日切时间（重排 + 截断）', el('input', {
+            value: ch.dayStart || '00:00',
+            type: 'time',
+            onchange: (e) => {
+              ch.dayStart = e.target.value || '00:00';
+              markDirty('channels');
+            },
+          }))
+        : null,
     ),
     el(
       'div',

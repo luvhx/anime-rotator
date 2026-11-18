@@ -5,7 +5,6 @@
     "publicDir": "public"
   },
   "timezone": "Asia/Shanghai",
-
   "webdav": {
     "baseUrl": "",
     "root": "动画",
@@ -13,12 +12,10 @@
     "password": "",
     "timeoutMs": 30000
   },
-
   "paths": {
     "library": "data/library.json",
     "durations": "data/durations.json"
   },
-
   "stream": {
     "mode": "proxy",
     "urlPrefix": null,
@@ -27,11 +24,9 @@
     "passRange": true,
     "headers": {}
   },
-
   "library": {
     "fallbackDurationMs": 1440000
   },
-
   "channels": [
     {
       "id": "main",
@@ -42,7 +37,10 @@
       "program": [
         {
           "label": "系列连播",
-          "rule": { "type": "sequential", "order": "name" }
+          "rule": {
+            "type": "sequential",
+            "order": "name"
+          }
         }
       ]
     },
@@ -55,12 +53,16 @@
       "program": [
         {
           "label": "随机档",
-          "rule": { "type": "shuffle" },
+          "rule": {
+            "type": "shuffle"
+          },
           "hours": 2
         },
         {
           "label": "轮播档",
-          "rule": { "type": "interleave" },
+          "rule": {
+            "type": "interleave"
+          },
           "count": 6
         }
       ]
@@ -76,14 +78,44 @@
           "rule": {
             "type": "daypart",
             "slots": [
-              { "from": "00:00", "to": "06:00", "label": "深夜档", "rule": { "type": "shuffle" } },
-              { "from": "06:00", "to": "12:00", "label": "早间档", "rule": { "type": "interleave" } },
-              { "from": "12:00", "to": "18:00", "label": "午后档", "rule": { "type": "weighted" } },
-              { "from": "18:00", "to": "24:00", "label": "黄金档", "rule": { "type": "sequential", "order": "shuffle" } }
+              {
+                "from": "00:00",
+                "to": "06:00",
+                "label": "深夜档",
+                "rule": {
+                  "type": "shuffle"
+                }
+              },
+              {
+                "from": "06:00",
+                "to": "12:00",
+                "label": "早间档",
+                "rule": {
+                  "type": "interleave"
+                }
+              },
+              {
+                "from": "12:00",
+                "to": "18:00",
+                "label": "午后档",
+                "rule": {
+                  "type": "weighted"
+                }
+              },
+              {
+                "from": "18:00",
+                "to": "24:00",
+                "label": "黄金档",
+                "rule": {
+                  "type": "sequential",
+                  "order": "shuffle"
+                }
+              }
             ]
           }
         }
-      ]
+      ],
+      "dayStart": "00:00"
     }
   ]
 }

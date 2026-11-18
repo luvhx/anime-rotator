@@ -319,6 +319,8 @@ export class ChannelTimeline {
     this.library = library;
     this.tz = tz;
     this.mode = this.channel.mode;
+    // 日编排的「日切时间」（秒）：默认 00:00；设成 06:00 就是一个 06:00 → 次日 06:00 的播出日
+    this.dayOffsetMs = (this.channel.dayStartSec || 0) * 1000;
     this._cycle = null;
     this._dayCache = new Map();
     this._series = seriesOfEarly(library, this.channel);
@@ -326,6 +328,16 @@ export class ChannelTimeline {
 
   get anchorMs() {
     return this.channel.anchorMs;
+  }
+
+  /** 某一时刻所属的「播出日」序号（按日切时间对齐） */
+  dayIndexOf(ms) {
+    return localDayIndex(ms - this.dayOffsetMs, this.tz);
+  }
+
+  /** 某个播出日的起点（毫秒） */
+  dayStartOf(dayIndex) {
+    return dayStartMs(dayIndex, this.tz) + this.dayOffsetMs;
   }
 
   /**
@@ -444,7 +456,7 @@ export class ChannelTimeline {
   dayPlan(dayIndex) {
     const cached = this._dayCache.get(dayIndex);
     if (cached) return cached;
-    const start = dayStartMs(dayIndex, this.tz);
+    const start = this.dayStartOf(dayIndex);
     const { entries } = this.expand(start);
     const out = [];
     let cursor = 0;
@@ -470,7 +482,7 @@ export class ChannelTimeline {
   /** 定位：给定时刻返回当前节目 + 进度 */
   resolve(nowMs) {
     if (this.mode === 'daily') {
-      const day = localDayIndex(nowMs, this.tz);
+      const day = this.dayIndexOf(nowMs);
       let plan = this.dayPlan(day);
       let offset = nowMs - plan.dayStart;
       if (offset < 0 || offset >= DAY_MS) {
@@ -503,7 +515,7 @@ export class ChannelTimeline {
   schedule(fromMs, toMs, limit = 50) {
     const out = [];
     if (this.mode === 'daily') {
-      let day = localDayIndex(fromMs, this.tz);
+      let day = this.dayIndexOf(fromMs);
       let guard = 0;
       while (out.length < limit && guard++ < 400) {
         const plan = this.dayPlan(day);
@@ -515,7 +527,7 @@ export class ChannelTimeline {
           if (ends >= toMs) return out;
         }
         day++;
-        if (dayStartMs(day, this.tz) > toMs) break;
+        if (this.dayStartOf(day) > toMs) break;
       }
       return out;
     }
@@ -544,7 +556,7 @@ export class ChannelTimeline {
 
   stats() {
     if (this.mode === 'daily') {
-      const today = localDayIndex(Date.now(), this.tz);
+      const today = this.dayIndexOf(Date.now());
       const plan = this.dayPlan(today);
       return {
         mode: 'daily',
@@ -655,6 +667,8 @@ export function normalizeChannel(def, tz = 'Asia/Shanghai') {
     name: def.name || def.id,
     description: def.description || '',
     mode: def.mode === 'daily' ? 'daily' : 'loop',
+    dayStart: def.dayStart || '00:00',
+    dayStartSec: def.dayStart ? parseClock(def.dayStart) : 0,
     seed: def.seed ?? def.id,
     library: def.library || {},
     weights: def.weights || null,

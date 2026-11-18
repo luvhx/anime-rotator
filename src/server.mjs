@@ -449,6 +449,7 @@ export function createApp(baseConfig) {
           name: ch.name,
           description: ch.description || '',
           mode: ch.mode,
+          dayStart: ch.dayStart || '00:00',
           anchor: new Date(ch.anchorMs).toISOString(),
           program: ch.program,
           stats: summary.stats,

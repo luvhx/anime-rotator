@@ -8,7 +8,7 @@
  */
 import { Library } from '../src/library.mjs';
 import { ChannelTimeline, RULE_TYPES } from '../src/scheduler.mjs';
-import { dayStartMs, fmtDuration } from '../src/util.mjs';
+import { dayStartMs, localParts, fmtDuration } from '../src/util.mjs';
 
 const TZ = 'Asia/Shanghai';
 let failures = 0;
@@ -195,6 +195,51 @@ try {
 const tl = new ChannelTimeline({ channel: channels.seq, library, tz: TZ });
 const before = tl.resolve(Date.parse('2025-06-01T12:00:00+08:00'));
 check(before.startsAt <= Date.parse('2025-06-01T12:00:00+08:00'), '锚点之前的时间也能定位');
+
+/* --------------------------- 日切时间 --------------------------- */
+
+const dayChannel = (dayStart) => ({
+  id: `daily-${dayStart.replace(':', '')}`,
+  name: `日切 ${dayStart}`,
+  mode: 'daily',
+  dayStart,
+  program: [
+    {
+      fill: true,
+      rule: {
+        type: 'daypart',
+        slots: [
+          { from: '00:00', to: '06:00', label: '深夜', rule: { type: 'shuffle' } },
+          { from: '06:00', to: '18:00', label: '白天', rule: { type: 'interleave' } },
+          { from: '18:00', to: '24:00', label: '黄金', rule: { type: 'sequential' } },
+        ],
+      },
+    },
+  ],
+});
+
+for (const dayStart of ['00:00', '06:00', '04:30']) {
+  const tl = new ChannelTimeline({ channel: dayChannel(dayStart), library, tz: TZ });
+  const probe = Date.parse('2026-06-02T03:00:00+08:00');
+  const plan = tl.dayPlan(tl.dayIndexOf(probe));
+  const [hh, mm] = dayStart.split(':').map(Number);
+
+  // 播出日的起点应当正好落在配置的时钟点上
+  const p = localParts(plan.dayStart, TZ);
+  check(p.hour === hh && p.minute === mm, `日切 ${dayStart}：播出日从该时刻开始`, `${p.hour}:${String(p.minute).padStart(2, '0')}`);
+
+  // 03:00 必须落在该播出日内
+  check(plan.dayStart <= probe && probe < plan.dayStart + 86400000, `日切 ${dayStart}：03:00 落在该播出日`, new Date(plan.dayStart).toISOString());
+
+  // 覆盖满 24 小时
+  const last = plan.entries[plan.entries.length - 1];
+  const covered = (last.absStart + last.durationMs - plan.dayStart) / 3600_000;
+  check(Math.abs(covered - 24) < 0.05, `日切 ${dayStart}：播出日覆盖 24h`, `${covered.toFixed(2)}h`);
+
+  // 边界之后（+24h + 1s）必须进入下一个播出日
+  const after = tl.resolve(plan.dayStart + 86400000 + 1000);
+  check(after.startsAt >= plan.dayStart + 86400000, `日切 ${dayStart}：跨越日切点后进入新播出日`);
+}
 
 console.log(failures === 0 ? '\n自检全部通过 ✓' : `\n${failures} 项失败 ✗`);
 process.exit(failures === 0 ? 0 : 1);
