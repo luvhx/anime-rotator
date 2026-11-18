@@ -40,7 +40,7 @@ fi
 
 if [ "$should_scan" = "1" ]; then
   echo "[entrypoint] 未找到节目库索引 ${LIB}，开始扫描 WebDAV…"
-  echo "[entrypoint] 大库首次扫描可能几十分钟；也可另开终端执行：docker compose run --rm anime-rotator node src/cli/scan.mjs"
+  echo "[entrypoint] 大库首次扫描可能几十分钟；也可另开终端执行：docker compose run --rm media-rotator node src/cli/scan.mjs"
   run_node node src/cli/scan.mjs || echo "[entrypoint] 扫描失败：请检查 WebDAV 配置与环境变量"
 fi
 

@@ -20,6 +20,7 @@ import { TmdbClient } from './tmdb.mjs';
 import { SubtitleService } from './subtitles.mjs';
 import { RemuxService } from './remux.mjs';
 import { CompatStore } from './compat-store.mjs';
+import { PrefetchWorker } from './prefetch.mjs';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -60,6 +61,7 @@ export function createApp(baseConfig) {
     subs: null,
     remux: null,
     compat: null,
+    prefetch: null,
     scan: { running: false, stage: null, done: 0, total: 0, extra: '', startedAt: null, finishedAt: null, error: null },
     error: null,
   };
@@ -93,7 +95,8 @@ export function createApp(baseConfig) {
       cacheDir: path.join(path.dirname(cfg.paths.library), 'remux'),
       ffmpegPath: cfg.subtitles?.ffmpegPath || 'ffmpeg',
       ffprobePath: cfg.remux?.ffprobePath || 'ffprobe',
-      maxBytes: cfg.remux?.maxBytes || 20 * 1024 ** 3,
+      maxBytes: cfg.remux?.maxBytes ?? 20 * 1024 ** 3,
+      maxFiles: cfg.remux?.maxFiles || 0,
       enabled: cfg.remux?.enabled !== false,
     });
     state.remux.detect();
@@ -105,11 +108,40 @@ export function createApp(baseConfig) {
         root: compatCfg.webdav?.root || 'compat',
         urlPrefix: compatCfg.urlPrefix || cfg.stream.urlPrefix || cfg.webdav.baseUrl,
         keepLocal: compatCfg.keepLocal !== false,
+        maxFiles: compatCfg.maxFiles || 0,
+        maxBytes: compatCfg.maxBytes || 0,
+        indexFile: path.join(path.dirname(cfg.paths.library), 'compat-index.json'),
       });
     } else {
       state.compat = null;
     }
     if (state.remux) state.remux.setStore(state.compat);
+
+    // 预封装：把每个频道的「当前 + 下一集」提前转好并上传
+    state.prefetch?.stop();
+    state.prefetch = null;
+    const pf = cfg.prefetch || {};
+    if (pf.enabled !== false && cfg.channels.length > 0) {
+      const channelIds = Array.isArray(pf.channels) && pf.channels.length > 0 ? pf.channels : cfg.channels.map((c) => c.id);
+      state.prefetch = new PrefetchWorker({
+        channelIds: channelIds.filter((id) => cfg.channels.some((c) => c.id === id)),
+        ahead: pf.ahead ?? 1,
+        intervalMs: pf.intervalMs ?? 20000,
+        needsWork: (ep) => state.remux.needsWork(ep),
+        enqueue: (ep) => state.remux.start(ep),
+        getNow: (channelId) => {
+          const tl = getTimeline(channelId);
+          const now = Date.now();
+          const cur = tl.resolve(now);
+          const upcoming = tl.schedule(now, now + 6 * 3600_000, 3).filter((i) => i.startsAt > now);
+          return { current: { episode: cur.episode, startsAt: cur.startsAt }, upcoming: upcoming.map((i) => ({ episode: i.episode, startsAt: i.startsAt })) };
+        },
+        log: (msg) => {
+          if (process.env.LOG_REQUESTS) console.log(`[prefetch] ${msg}`);
+        },
+      });
+      state.prefetch.start();
+    }
     if (reloadLibrary) {
       if (fs.existsSync(cfg.paths.library)) {
         try {
@@ -376,10 +408,24 @@ export function createApp(baseConfig) {
         timezone: cfg.timezone,
         tmdb: { language: cfg.tmdb.language, enabled: state.tmdb.enabled, mode: state.tmdb.mode, lastError: state.tmdb.lastError },
         subtitles: { enabled: cfg.subtitles?.enabled !== false, ffmpeg: Boolean(state.subs?.ffmpegAvailable) },
+        remux: {
+          enabled: cfg.remux?.enabled !== false,
+          maxFiles: cfg.remux?.maxFiles || 0,
+          maxBytes: cfg.remux?.maxBytes || 0,
+          stats: state.remux?.stats() || null,
+        },
         remux: { enabled: Boolean(state.remux?.ready), cache: state.remux?.stats() || null },
+        prefetch: {
+          enabled: cfg.prefetch?.enabled !== false,
+          ahead: cfg.prefetch?.ahead ?? 1,
+          intervalMs: cfg.prefetch?.intervalMs ?? 20000,
+          stats: state.prefetch ? state.prefetch.stats() : null,
+        },
         compat: {
           publish: cfg.compat?.publish || 'local',
           keepLocal: cfg.compat?.keepLocal !== false,
+          maxFiles: cfg.compat?.maxFiles || 0,
+          maxBytes: cfg.compat?.maxBytes || 0,
           urlPrefix: cfg.compat?.urlPrefix || '',
           webdav: {
             baseUrl: cfg.compat?.webdav?.baseUrl || '',
@@ -462,6 +508,8 @@ export function createApp(baseConfig) {
     }
     if (incoming.channels) next.channels = incoming.channels;
     if (incoming.subtitles) next.subtitles = { ...(cur.subtitles || {}), ...incoming.subtitles };
+    if (incoming.remux) next.remux = { ...(cur.remux || {}), ...incoming.remux };
+    if (incoming.prefetch) next.prefetch = { ...(cur.prefetch || {}), ...incoming.prefetch };
     if (incoming.compat) {
       next.compat = { ...(cur.compat || {}), ...incoming.compat };
       next.compat.webdav = { ...(cur.compat?.webdav || {}), ...(incoming.compat.webdav || {}) };
@@ -771,7 +819,7 @@ export function createApp(baseConfig) {
       if (pass === adminPassword) return true;
       void user;
     }
-    res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="anime-rotator admin"', 'Content-Type': 'text/plain; charset=utf-8' });
+    res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="media-rotator admin"', 'Content-Type': 'text/plain; charset=utf-8' });
     res.end('需要管理员密码');
     return false;
   }
@@ -819,6 +867,7 @@ export function createApp(baseConfig) {
           tmdb: { enabled: state.tmdb.enabled },
           subtitles: { enabled: subtitleEnabled(), ffmpeg: Boolean(state.subs?.ffmpegAvailable) },
           remux: { enabled: Boolean(state.remux?.ready), cache: state.remux?.stats() || null },
+          prefetch: state.prefetch ? state.prefetch.stats() : null,
           compat: {
             publish: state.config.compat?.publish || 'local',
             store: state.compat ? { root: state.compat.root, urlPrefix: state.compat.urlPrefix } : null,
@@ -957,6 +1006,8 @@ export function createApp(baseConfig) {
       }
     }
   });
+
+  server.on('close', () => state.prefetch?.stop());
 
   return { server, state, rebuild, runScan, getTimeline };
 }

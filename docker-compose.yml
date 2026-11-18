@@ -1,16 +1,16 @@
-# 番剧轮播 · 一条命令起飞
+# 媒体轮播 · 一条命令起飞
 #
 #   docker compose up -d
 #   打开 http://<宿主机>:8088/admin  →  填 WebDAV → 扫描 → 选片 → 编排
 #
 # 不需要预先准备任何配置文件：配置保存在 ./data/settings.json（随数据卷持久化）。
 
-name: anime-rotator
+name: media-rotator
 
 services:
-  anime-rotator:
-    image: ${IMAGE:-ghcr.io/luvhx/anime-rotator-app:latest}
-    container_name: anime-rotator
+  media-rotator:
+    image: ${IMAGE:-ghcr.io/luvhx/media-rotator:latest}
+    container_name: media-rotator
     restart: unless-stopped
     ports:
       - "${APP_PORT:-8088}:8088"

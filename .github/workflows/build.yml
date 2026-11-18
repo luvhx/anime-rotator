@@ -10,9 +10,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  # 包名与仓库名解耦：旧的 ghcr.io/<owner>/anime-rotator 包与已删除的仓库绑定过，
-  # 新仓库无法写入，故使用独立包名。
-  IMAGE_NAME: anime-rotator-app
+  IMAGE_NAME: media-rotator
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -42,6 +40,9 @@ jobs:
 
       - name: 字幕转换自检
         run: node tools/selftest-subtitles.mjs
+
+      - name: 预封装调度自检
+        run: node tools/selftest-prefetch.mjs
 
       - name: 冷启动冒烟（未配置状态）
         run: node tools/smoke-boot.mjs

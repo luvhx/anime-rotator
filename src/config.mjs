@@ -46,14 +46,24 @@ export const DEFAULT_CONFIG = {
   // 转封装：MKV → MP4（视频流直接 copy），解决 iOS/Safari 不支持 MKV 的问题
   remux: {
     enabled: true,
-    maxBytes: 20 * 1024 ** 3,
+    maxBytes: 20 * 1024 ** 3, // 每集产物约几百 MB，0 = 不限制
+    maxFiles: 0, // 本地缓存最多保留几集，0 = 不限制
     ffprobePath: 'ffprobe',
+  },
+  // 预封装：提前把「当前 + 下一集」转好，不再等客户端触发
+  prefetch: {
+    enabled: true,
+    ahead: 1,
+    intervalMs: 20000,
+    channels: [],
   },
   // 兼容产物发布：local 只存本地；webdav 上传到（可与原片不同的）WebDAV，之后 302 直连
   compat: {
     publish: 'local',
     keepLocal: true,
     urlPrefix: '',
+    maxFiles: 0, // 远端产物最多保留几集，0 = 不限制
+    maxBytes: 0, // 远端产物总大小上限，0 = 不限制
     webdav: {
       baseUrl: '',
       root: 'compat',

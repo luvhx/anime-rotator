@@ -3,7 +3,7 @@
  * ------------------------------------------------------------------
  * 纯原生实现，无构建步骤：
  *   - 配置（WebDAV / 取流 / 时区 / TMDB）
- *   - 番剧库（勾选参与编排的番剧，封面/简介来自 TMDB）
+ *   - 媒体库（勾选参与编排的节目，封面/简介来自 TMDB）
  *   - 编排（频道 + 规则段编辑，含模板）
  *   - 预览（用未保存的草稿实时试算节目单）
  */
@@ -161,6 +161,15 @@ function buildDraft(state) {
     timezone: st.timezone ?? cfg.timezone,
     tmdb: { apiKey: '', readToken: '', language: st.tmdb?.language ?? cfg.tmdb.language },
     subtitles: { enabled: st.subtitles?.enabled ?? cfg.subtitles?.enabled !== false },
+    prefetch: {
+      enabled: st.prefetch?.enabled ?? cfg.prefetch?.enabled !== false,
+      ahead: st.prefetch?.ahead ?? cfg.prefetch?.ahead ?? 1,
+      intervalMs: st.prefetch?.intervalMs ?? cfg.prefetch?.intervalMs ?? 20000,
+    },
+    remuxLimits: {
+      maxFiles: st.remux?.maxFiles ?? cfg.remux?.maxFiles ?? 0,
+      maxBytes: st.remux?.maxBytes ?? cfg.remux?.maxBytes ?? 0,
+    },
     compat: {
       publish: st.compat?.publish ?? cfg.compat?.publish ?? 'local',
       keepLocal: st.compat?.keepLocal ?? cfg.compat?.keepLocal ?? true,
@@ -204,8 +213,8 @@ function renderOverview() {
     { k: '频道', v: `${S.draft.channels.length} 个`, s: S.draft.channels.map((c) => c.name).join(' / ') || '—' },
     {
       k: '参与编排',
-      v: S.draft.selection.mode === 'include' ? `已选 ${S.draft.selection.series.length} 部` : '全部番剧',
-      s: S.draft.selection.mode === 'include' ? '在「番剧库」里调整' : '取消勾选即可只播指定的番剧',
+      v: S.draft.selection.mode === 'include' ? `已选 ${S.draft.selection.series.length} 部` : '全部节目',
+      s: S.draft.selection.mode === 'include' ? '在「媒体库」里调整' : '取消勾选即可只播指定的节目',
     },
     {
       k: 'TMDB',
@@ -338,7 +347,24 @@ function fillConfigForm() {
   $('#cfg-timezone').value = d.timezone || 'Asia/Shanghai';
   $('#cfg-tmdb-lang').value = d.tmdb.language || 'zh-CN';
   $('#cfg-subs').checked = S.draft.subtitles?.enabled !== false;
+  const pf = S.draft.prefetch || {};
+  $('#cfg-pf-enabled').checked = pf.enabled !== false;
+  $('#cfg-pf-ahead').value = pf.ahead ?? 1;
+  $('#cfg-pf-interval').value = Math.round((pf.intervalMs ?? 20000) / 1000);
+  const rl = S.draft.remuxLimits || {};
+  $('#cfg-remux-maxFiles').value = rl.maxFiles ?? 0;
+  $('#cfg-remux-maxGB').value = Math.round((rl.maxBytes || 0) / 1024 ** 3);
   const compat = S.draft.compat || {};
+  $('#cfg-compat-maxFiles').value = compat.maxFiles ?? 0;
+  $('#cfg-compat-maxGB').value = Math.round((compat.maxBytes || 0) / 1024 ** 3);
+  const prefetchHint = $('#prefetchHint');
+  if (prefetchHint && S.state.config.prefetch) {
+    const cfgPf = S.state.config.prefetch;
+    const stats = cfgPf.stats;
+    prefetchHint.textContent = stats
+      ? `预封装运行中：每 ${Math.round(stats.intervalMs / 1000)} 秒检查一次，已排队 ${stats.queued} 集，跳过 ${stats.skipped} 次`
+      : '服务端会按节目单提前把「正在播」和「下一集」转封装并上传，客户端打开即可播放。';
+  }
   $('#cfg-compat-publish').value = compat.publish || 'local';
   $('#cfg-compat-root').value = compat.webdav?.root || 'compat';
   $('#cfg-compat-prefix').value = compat.urlPrefix || '';
@@ -422,6 +448,28 @@ function bindConfigForm() {
   $('#cfg-compat-publish').addEventListener('change', readCompat);
   $('#cfg-compat-keeplocal').addEventListener('change', readCompat);
 
+  const readPrefetch = () => {
+    S.draft.prefetch = {
+      enabled: $('#cfg-pf-enabled').checked,
+      ahead: Math.max(0, Number($('#cfg-pf-ahead').value) || 0),
+      intervalMs: Math.max(10000, (Number($('#cfg-pf-interval').value) || 20) * 1000),
+    };
+    S.draft.remuxLimits = {
+      maxFiles: Math.max(0, Number($('#cfg-remux-maxFiles').value) || 0),
+      maxBytes: Math.max(0, Number($('#cfg-remux-maxGB').value) || 0) * 1024 ** 3,
+    };
+    S.draft.compat = {
+      ...(S.draft.compat || {}),
+      maxFiles: Math.max(0, Number($('#cfg-compat-maxFiles').value) || 0),
+      maxBytes: Math.max(0, Number($('#cfg-compat-maxGB').value) || 0) * 1024 ** 3,
+    };
+    markDirty('config');
+  };
+  for (const id of ['cfg-pf-ahead', 'cfg-pf-interval', 'cfg-remux-maxFiles', 'cfg-remux-maxGB', 'cfg-compat-maxFiles', 'cfg-compat-maxGB']) {
+    $(`#${id}`).addEventListener('input', readPrefetch);
+  }
+  $('#cfg-pf-enabled').addEventListener('change', readPrefetch);
+
   $('#btnTmdbTest').addEventListener('click', async () => {
     const btn = $('#btnTmdbTest');
     btn.disabled = true;
@@ -446,7 +494,7 @@ function bindConfigForm() {
   $('#btnScan').addEventListener('click', startScan);
 }
 
-/* ------------------------------ 番剧库 ------------------------------ */
+/* ------------------------------ 媒体库 ------------------------------ */
 
 async function loadSeries({ q = '' } = {}) {
   const data = await api(`/api/admin/series?limit=500&q=${encodeURIComponent(q)}`);
@@ -462,7 +510,7 @@ function renderSeries() {
   const grid = $('#seriesGrid');
   grid.innerHTML = '';
   if (S.allSeries.length === 0) {
-    grid.append(el('div', { class: 'empty' }, '媒体库里还没有番剧：先完成扫描。'));
+    grid.append(el('div', { class: 'empty' }, '媒体库里还没有节目：先完成扫描。'));
     return;
   }
   for (const s of S.allSeries) {
@@ -1023,6 +1071,8 @@ async function saveAll() {
     tmdb: { language: S.draft.tmdb.language },
     subtitles: { enabled: S.draft.subtitles?.enabled !== false },
     compat: S.draft.compat,
+    prefetch: S.draft.prefetch,
+    remux: { maxFiles: S.draft.remuxLimits?.maxFiles || 0, maxBytes: S.draft.remuxLimits?.maxBytes || 0 },
     channels: S.draft.channels,
     selection: S.draft.selection,
   };

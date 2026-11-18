@@ -228,7 +228,7 @@ async function startCompat(item) {
   if (state.compatJob && state.compatJob.fileId === item.fileId) return;
   state.compatJob = { fileId: item.fileId };
   hideOverlay();
-  showCompat(0, '正在为你的设备转封装（MKV → MP4）…');
+  showCompat(0, '正在准备兼容格式（MKV → MP4，服务端预封装）…');
 
   const applyReady = () => {
     hideCompat();
@@ -241,8 +241,9 @@ async function startCompat(item) {
   };
 
   try {
-    let st = await fetch(`/api/remux/${item.fileId}`, { method: 'POST' }).then((r) => r.json());
-    if (st.state === 'ready') return applyReady();
+    // 预封装由服务端后台负责：这里只查询状态，不再触发转封装
+    let st = await fetch(`/api/remux/${item.fileId}`).then((r) => r.json());
+    if (st.playable) return applyReady();
     if (st.state === 'unavailable' || st.state === 'disabled') {
       hideCompat();
       showError(`无法转封装：${st.reason || '当前镜像没有 ffmpeg，请使用 :latest-ffmpeg 镜像'}`);
@@ -257,14 +258,14 @@ async function startCompat(item) {
     for (let i = 0; i < 300; i++) {
       await new Promise((r) => setTimeout(r, 2000));
       st = await fetch(`/api/remux/${item.fileId}`).then((r) => r.json());
-      if (st.state === 'ready') return applyReady();
+      if (st.playable) return applyReady();
       if (st.state === 'error') {
         hideCompat();
         showError(`转封装失败：${st.error || '未知错误'}`);
         return;
       }
       const pct = Math.round((st.progress || 0) * 100);
-      showCompat(st.progress || 0, `正在转封装… ${pct}%（视频流直接复制，不重新编码）`);
+      showCompat(st.progress || 0, `等待预封装… ${pct}%（服务端正在准备这一集）`);
     }
     hideCompat();
     showError('转封装超时，请稍后重试');
@@ -580,7 +581,7 @@ function showSetup() {
   link.textContent = '⚙ 打开管理界面';
   const p = document.createElement('p');
   p.className = 'hint';
-  p.textContent = '还没有配置媒体库：在管理界面填写 WebDAV 地址、扫描并选择要播的番剧。';
+  p.textContent = '还没有配置媒体库：在管理界面填写 WebDAV 地址、扫描并选择要播的节目。';
   overlay.append(link, p);
   setStatus('未初始化：请先打开 /admin 完成配置');
   $('seriesName').textContent = '尚未配置';

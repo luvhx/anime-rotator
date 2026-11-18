@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>番剧轮播 · 管理</title>
+    <title>媒体轮播 · 管理</title>
     <link rel="stylesheet" href="/admin.css" />
     <link
       rel="icon"
@@ -14,7 +14,7 @@
     <header class="topbar">
       <div class="brand">
         <span class="logo">▶</span>
-        <span>番剧轮播</span>
+        <span>媒体轮播</span>
         <span class="sep">/</span>
         <span class="muted">管理</span>
       </div>
@@ -27,7 +27,7 @@
     <nav class="tabs" id="tabs">
       <button class="tab active" data-tab="overview">概览</button>
       <button class="tab" data-tab="config">配置</button>
-      <button class="tab" data-tab="series">番剧库</button>
+      <button class="tab" data-tab="series">媒体库</button>
       <button class="tab" data-tab="channels">编排</button>
       <button class="tab" data-tab="preview">预览</button>
     </nav>
@@ -95,7 +95,7 @@
           </div>
           <p class="hint" id="subsHint">
             外挂 <code>.ass</code> / <code>.srt</code> 会自动转成 WebVTT 挂到播放器；MKV 内挂字幕需要带 ffmpeg 的镜像
-            （<code>ghcr.io/luvhx/anime-rotator-app:latest-ffmpeg</code>）。
+            （<code>ghcr.io/luvhx/media-rotator:latest-ffmpeg</code>）。
           </p>
         </div>
 
@@ -118,6 +118,22 @@
             <label>目标密码 <input id="cfg-compat-password" type="password" placeholder="留空则不修改" /></label>
           </div>
           <p class="hint" id="compatHint">产物先落本地立即可播，再后台上传；上传完成后客户端直接 302 到 CDN，后端零带宽。</p>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head"><h2>预封装与产物上限</h2></div>
+          <div class="form-grid">
+            <label class="check inline"><input type="checkbox" id="cfg-pf-enabled" /> 自动预封装（当前 + 下一集）</label>
+            <label>预取提前量（集） <input id="cfg-pf-ahead" type="number" min="0" max="5" step="1" /></label>
+            <label>检查间隔（秒） <input id="cfg-pf-interval" type="number" min="10" step="5" /></label>
+          </div>
+          <div class="form-grid mt">
+            <label>本地缓存上限（集，0=不限） <input id="cfg-remux-maxFiles" type="number" min="0" step="1" /></label>
+            <label>本地缓存上限（GB，0=不限） <input id="cfg-remux-maxGB" type="number" min="0" step="1" /></label>
+            <label>远端产物上限（集，0=不限） <input id="cfg-compat-maxFiles" type="number" min="0" step="1" /></label>
+            <label>远端产物上限（GB，0=不限） <input id="cfg-compat-maxGB" type="number" min="0" step="1" /></label>
+          </div>
+          <p class="hint" id="prefetchHint">服务端会按节目单提前把「正在播」和「下一集」转封装并上传，客户端打开即可播放，不再等转封装。</p>
         </div>
 
         <div class="panel">
@@ -163,10 +179,10 @@
         </div>
       </section>
 
-      <!-- ============================ 番剧库 ============================ -->
+      <!-- ============================ 媒体库 ============================ -->
       <section class="view" data-view="series">
         <div class="toolbar">
-          <input id="seriesSearch" type="search" placeholder="搜索番剧名…" />
+          <input id="seriesSearch" type="search" placeholder="搜索节目名…" />
           <button class="btn ghost small" id="selAll">全选</button>
           <button class="btn ghost small" id="selNone">清空</button>
           <button class="btn ghost small" id="selFiltered">选中筛选结果</button>
@@ -174,7 +190,7 @@
           <span class="pill" id="selCount">—</span>
         </div>
         <p class="hint">
-          勾选参与编排的番剧；不勾选（全库模式）时所有番剧都会进入时间轴。取消勾选后点右上角「保存设置」生效。
+          勾选参与编排的节目；不勾选（全库模式）时所有节目都会进入时间轴。取消勾选后点右上角「保存设置」生效。
         </p>
         <div class="grid" id="seriesGrid"></div>
         <div class="save-bar">

@@ -3,11 +3,11 @@
 #   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 #
 services:
-  anime-rotator:
-    image: anime-rotator:local
+  media-rotator:
+    image: media-rotator:local
     build:
       context: .
       dockerfile: Dockerfile
 
   rescan:
-    image: anime-rotator:local
+    image: media-rotator:local

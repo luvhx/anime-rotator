@@ -2,7 +2,7 @@
 /**
  * 管理界面冒烟（无浏览器）
  *
- * 用最小 DOM 桩加载 public/admin.js，验证「加载状态 → 渲染概览 → 切到番剧库 → 切到编排」
+ * 用最小 DOM 桩加载 public/admin.js，验证「加载状态 → 渲染概览 → 切到媒体库 → 切到编排」
  * 这条链路没有运行时错误。
  *
  *   node tools/smoke-admin-ui.mjs
@@ -228,7 +228,8 @@ const check = (ok, msg, extra = '') => {
   if (!ok) fails++;
 };
 
-await import('/data/dsh/home/番剧轮播/public/admin.js').catch((e) => errors.push('import: ' + e.message));
+const APP_PATH = new URL('../public/admin.js', import.meta.url).href;
+await import(APP_PATH).catch((e) => errors.push('import: ' + e.message));
 await wait(1500);
 
 const q = (id) => registry.get(id);
@@ -236,10 +237,10 @@ check(q('statusPill').textContent.length > 0, '顶栏状态', q('statusPill').te
 check(q('overviewCards').children.length >= 4, '概览卡片渲染', `${q('overviewCards').children.length} 张`);
 check(q('cfg-baseUrl').value.length > 0, '配置表单已填充', q('cfg-baseUrl').value.slice(0, 40));
 
-// 切到番剧库
+// 切到媒体库
 tabs[2].dispatch('click');
 await wait(1200);
-check(q('seriesGrid').children.length > 0, '番剧卡片渲染', `${q('seriesGrid').children.length} 张`);
+check(q('seriesGrid').children.length > 0, '节目卡片渲染', `${q('seriesGrid').children.length} 张`);
 check(q('selCount').textContent.includes('参与编排'), '选片计数显示', q('selCount').textContent);
 const firstCard = q('seriesGrid').children[0];
 check(Boolean(firstCard), '第一张卡片存在');

@@ -36,7 +36,7 @@ export class WebDavClient {
   }
 
   headers(extra = {}) {
-    const h = { 'User-Agent': 'anime-rotator/1.0', ...extra };
+    const h = { 'User-Agent': 'media-rotator/1.0', ...extra };
     const a = this.authHeader;
     if (a) h.Authorization = a;
     return h;

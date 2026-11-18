@@ -1,14 +1,14 @@
 # syntax=docker/dockerfile:1
 
 ###############################################################################
-# 番剧轮播 · Anime Rotator
+# 媒体轮播 · Anime Rotator
 # 零依赖 Node 应用：无需 npm install，单阶段镜像
 ###############################################################################
 FROM node:22-alpine
 
-LABEL org.opencontainers.image.title="anime-rotator" \
+LABEL org.opencontainers.image.title="media-rotator" \
       org.opencontainers.image.description="WebDAV 动画库轮播：多规则编排时间轴，按时间定位视频与进度，支持 302 直链" \
-      org.opencontainers.image.source="https://github.com/luvhx/anime-rotator" \
+      org.opencontainers.image.source="https://github.com/luvhx/media-rotator" \
       org.opencontainers.image.licenses="MIT"
 
 ENV NODE_ENV=production \

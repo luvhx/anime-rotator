@@ -1,6 +1,6 @@
-# 番剧轮播 · Anime Rotator
+# 媒体轮播 · Anime Rotator
 
-[![build](https://github.com/luvhx/anime-rotator/actions/workflows/build.yml/badge.svg)](https://github.com/luvhx/anime-rotator/actions/workflows/build.yml)
+[![build](https://github.com/luvhx/media-rotator/actions/workflows/build.yml/badge.svg)](https://github.com/luvhx/media-rotator/actions/workflows/build.yml)
 
 把 WebDAV 上的动画库变成一条**永不落幕的直播频道**：后端按多种规则编排播出时间表，任意时刻都能算出「现在在播哪一集、播到了第几秒」；前端打开就是直播，自动定位到当前进度，并提供 302 直链播放与自定义 URL 前缀。
 
@@ -33,7 +33,7 @@ WebDAV 媒体库 ──scan──> data/library.json（含每集真实时长）
 | 302 直链 | `/stream/<fileId>` 直接 302 到 WebDAV/CDN 地址，后端零带宽；也可切 `proxy` 模式由后端转发 |
 | 自定义 URL 前缀 | 前端读取视频文件的地址前缀可配置（CDN、反代、内网域名），支持逐请求覆盖 |
 | 前端自动同步 | 打开即在播，每秒校正漂移，可手动「重新同步」；播放器回写真实时长帮助索引自愈 |
-| Web 管理界面 | `/admin` 里改配置、勾选番剧、可视化编辑编排、实时预览节目单，改完即生效 |
+| Web 管理界面 | `/admin` 里改配置、勾选节目、可视化编辑编排、实时预览节目单，改完即生效 |
 | TMDB 元数据 | 封面、简介、评分、播出日期与剧集标题，自动按中文名匹配，也可手动纠正 |
 | 字幕自动加载 | 外挂 `.ass/.srt` 与 MKV 内挂字幕统一转 WebVTT 挂到 `<track>`，可一键开关 |
 | 兼容模式 | MKV 按需转封装成 MP4（视频流复制 + 音频 AAC + `hvc1`），解决 iOS/Safari 完全放不了 MKV 的问题 |
@@ -86,7 +86,7 @@ npm test                             # 编排引擎自检（不联网，CI 同�
 
 ### 概览
 
-库规模、频道数、参与编排的番剧数、TMDB 状态；「现在在播」实时预览；扫描入口（可选是否解析时长）与进度条。
+库规模、频道数、参与编排的节目数、TMDB 状态；「现在在播」实时预览；扫描入口（可选是否解析时长）与进度条。
 
 ### 配置
 
@@ -98,9 +98,9 @@ npm test                             # 编排引擎自检（不联网，CI 同�
 
 密码与 Key 保存后不会回显（接口只返回 `passwordSet: true`），留空表示不修改。
 
-### 番剧库
+### 媒体库
 
-按封面网格展示全库，勾选决定「哪些番剧参与编排」：
+按封面网格展示全库，勾选决定「哪些节目参与编排」：
 
 - 默认「全部参与」，取消勾选任意一部即切换为「只播勾选的」；
 - 支持搜索、全选、清空、选中当前筛选结果；
@@ -135,7 +135,7 @@ environment:
 
 1. 到 [themoviedb.org](https://www.themoviedb.org/settings/api) 免费申请 API Key（v3）或 Read Token（v4）；
 2. 填进 `配置 → TMDB`，点「测试连接」；
-3. 打开「番剧库」，封面会按中文名自动匹配（相似度 ≥ 0.55 才算命中），卡片角标显示来源；
+3. 打开「媒体库」，封面会按中文名自动匹配（相似度 ≥ 0.55 才算命中），卡片角标显示来源；
 4. 匹配错了可以手动指定 TMDB ID：`POST /api/admin/series/:id/tmdb`，body `{"tmdbId": 12345}`。
 
 没配 TMDB 也能正常播，只是没有封面与简介。
@@ -209,14 +209,14 @@ iOS / iPadOS 上所有浏览器（Safari、Chrome、"Gear" 等）都是 WebKit �
 
 ## Docker 部署
 
-镜像：`ghcr.io/luvhx/anime-rotator-app`（`latest` / `1.2.0` / `main`，linux/amd64 + linux/arm64，压缩后约 59 MB，零依赖，**公开可匿名拉取**）
+镜像：`ghcr.io/luvhx/media-rotator`（`latest` / `1.2.0` / `main`，linux/amd64 + linux/arm64，压缩后约 59 MB，零依赖，**公开可匿名拉取**）
 
-另有自带 ffmpeg 的变体 `ghcr.io/luvhx/anime-rotator-app:latest-ffmpeg`（+约 50 MB），用于抽取 MKV 内挂字幕。
+另有自带 ffmpeg 的变体 `ghcr.io/luvhx/media-rotator:latest-ffmpeg`（+约 50 MB），用于抽取 MKV 内挂字幕。
 
 ### 两条命令
 
 ```bash
-git clone https://github.com/luvhx/anime-rotator.git && cd anime-rotator
+git clone https://github.com/luvhx/media-rotator.git && cd media-rotator
 docker compose up -d
 ```
 
@@ -226,7 +226,7 @@ docker compose up -d
 
 1. 配置 → 填 `WebDAV 地址`（如 `http://192.168.1.10:19798/dav/115/Media`）、根目录（如 `动画`）、账号密码 → 保存；
 2. 概览 → 「开始扫描」（4000 集约 25 分钟，可先取消勾选「解析时长」快速建索引）；
-3. 番剧库 → 勾选要播的番剧（不勾 = 全部）；
+3. 媒体库 → 勾选要播的节目（不勾 = 全部）；
 4. 编排 → 改频道规则或套模板；
 5. 预览 → 确认节目单，保存。
 
@@ -258,7 +258,7 @@ data/
 
 > 环境变量只作为**初始值**：UI 保存后以 `data/settings.json` 为准。
 
-### 定时重扫（新增番剧自动进时间轴）
+### 定时重扫（新增节目自动进时间轴）
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.recurring.yml up -d
@@ -480,7 +480,7 @@ if (Math.abs(video.currentTime - target) > 4) video.currentTime = target;  // �
 | PUT | `/api/admin/settings` | 保存设置（WebDAV / 取流 / 时区 / TMDB / 频道 / 选片），支持 `dryRun` 只校验 |
 | POST | `/api/admin/scan` | 触发扫描 `{probe?: true}`，进度见 `/api/admin/state` |
 | POST | `/api/admin/preview` | 用草稿编排试算节目单 `{channel, hours, settings?}` |
-| GET | `/api/admin/series` | 番剧库（分页/搜索，带选中状态） |
+| GET | `/api/admin/series` | 媒体库（分页/搜索，带选中状态） |
 | GET | `/api/admin/series/:id` | 单部详情（本地剧集 + TMDB 季/集信息） |
 | GET | `/api/admin/posters?ids=a,b` | 批量取 TMDB 封面（≤24 部，带缓存） |
 | GET | `/api/admin/tmdb/search?q=` | 手动匹配时搜索 TMDB |
@@ -566,7 +566,7 @@ location /media/ {
 ## 目录结构
 
 ```
-番剧轮播/
+媒体轮播/
 ├── config.json                 # 本地运行配置（含 WebDAV 账号，已 gitignore）
 ├── config.example.json         # 配置模板
 ├── config.compose.json         # 容器内默认配置（频道内置，账号由 UI/环境变量提供）
@@ -583,7 +583,7 @@ location /media/ {
 │   ├── app.js                  # 播放器：拉时间轴、换源、seek 同步、节目单
 │   ├── style.css
 │   ├── admin.html              # 管理界面
-│   ├── admin.js                # 配置 / 番剧库 / 编排 / 预览
+│   ├── admin.js                # 配置 / 媒体库 / 编排 / 预览
 │   └── admin.css
 ├── tools/
 │   ├── selftest.mjs            # 编排引擎自检（CI，不联网）
@@ -620,7 +620,7 @@ npm run smoke
 - `smoke-api`：时钟一致性（两次 /api/now 的 offset 增量 = 真实间隔）、节目单首尾相接、当天不超过 24:00、Range 返回 206 且是真实 MKV 字节、404 分支。
 - `smoke-frontend`：用最小 DOM 桩加载 `public/app.js`，验证「取时间轴 → 设置 src → seek 到直播位置 → 漂移重同步」。
 - `smoke-admin`：管理接口（状态脱敏、选片、预览、编排校验、非法输入拒绝、静态资源）。
-- `smoke-admin-ui`：DOM 桩加载 `public/admin.js`，验证「概览 → 番剧库 → 编排 → 预览」整条交互链路无运行时错误。
+- `smoke-admin-ui`：DOM 桩加载 `public/admin.js`，验证「概览 → 媒体库 → 编排 → 预览」整条交互链路无运行时错误。
 - `npm test`：编排引擎自检 + 字幕转换自检 + 冷启动冒烟，都不联网，CI 同款。
 
 本机运行结果：15 项接口检查 + 11 项前端检查全部通过。
@@ -649,7 +649,7 @@ npm run smoke
 
 **iPad 上一只转圈怎么办？** 那是 MKV 容器不被 iOS 支持：换成 `:latest-ffmpeg` 镜像后，播放器会自动走「兼容模式」把 MKV 转封装成 MP4 再播（也可以手动点底栏按钮）。
 
-**镜像名为什么叫 anime-rotator-app？** 早期发布过一个 `ghcr.io/luvhx/anime-rotator` 包，它与被重建前的仓库绑定过，GitHub 不允许新仓库写入同名包，因此改用 `anime-rotator-app`。旧包（v1.0 内容）可以删除。
+**镜像名为什么叫 media-rotator？** 早期发布过一个 `ghcr.io/luvhx/media-rotator` 包，它与被重建前的仓库绑定过，GitHub 不允许新仓库写入同名包，因此改用 `media-rotator`。旧包（v1.0 内容）可以删除。
 
 ---
 

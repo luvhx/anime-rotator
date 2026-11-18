@@ -53,12 +53,14 @@ export function applySettings(baseConfig, settings = {}) {
   if (settings.timezone) cfg.timezone = settings.timezone;
   if (settings.tmdb) cfg.tmdb = { ...(cfg.tmdb || {}), ...pick(settings.tmdb, ['apiKey', 'readToken', 'language']) };
   if (settings.subtitles) cfg.subtitles = { ...(cfg.subtitles || {}), ...pick(settings.subtitles, ['enabled']) };
+  if (settings.remux) cfg.remux = { ...(cfg.remux || {}), ...pick(settings.remux, ['maxFiles', 'maxBytes']) };
+  if (settings.prefetch) cfg.prefetch = { ...(cfg.prefetch || {}), ...pick(settings.prefetch, ['enabled', 'ahead', 'intervalMs']) };
   if (settings.compat) {
     const compat = structuredClone(settings.compat);
     const webdav = pick(compat.webdav, ['baseUrl', 'root', 'username', 'password', 'timeoutMs']);
     cfg.compat = {
       ...(cfg.compat || {}),
-      ...pick(compat, ['publish', 'keepLocal', 'urlPrefix']),
+      ...pick(compat, ['publish', 'keepLocal', 'urlPrefix', 'maxFiles', 'maxBytes']),
       webdav: { ...(cfg.compat?.webdav || {}), ...webdav },
     };
   }
@@ -75,7 +77,7 @@ export function normalizeSelection(selection, fallback = { mode: 'all', series: 
 }
 
 /**
- * 把「全局选片」注入到每个频道：选中的番剧才参与编排
+ * 把「全局选片」注入到每个频道：选中的节目才参与编排
  * 频道自己还写了 library.series 时取交集
  */
 export function withSelection(channel, selection) {
@@ -137,6 +139,12 @@ export function validateSettings(settings, { baseConfig, timezone } = {}) {
     throw new Error('subtitles.enabled 必须是布尔值');
   }
 
+  if (settings.remux && settings.remux.maxBytes !== undefined && Number(settings.remux.maxBytes) < 0) {
+    throw new Error('remux.maxBytes 不能为负数（0 表示不限制）');
+  }
+  if (settings.prefetch && settings.prefetch.ahead !== undefined && Number(settings.prefetch.ahead) < 0) {
+    throw new Error('prefetch.ahead 不能为负数');
+  }
   if (settings.compat) {
     const c = settings.compat;
     if (c.publish && !['local', 'webdav'].includes(c.publish)) throw new Error('compat.publish 只能是 local 或 webdav');

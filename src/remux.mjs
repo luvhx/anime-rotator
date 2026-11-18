@@ -39,6 +39,7 @@ export class RemuxService {
     ffmpegPath = 'ffmpeg',
     ffprobePath = 'ffprobe',
     maxBytes = 20 * GB,
+    maxFiles = 0,
     enabled = true,
   } = {}) {
     this.dav = dav;
@@ -47,6 +48,7 @@ export class RemuxService {
     this.ffmpegPath = ffmpegPath;
     this.ffprobePath = ffprobePath;
     this.maxBytes = maxBytes;
+    this.maxFiles = Number(maxFiles) || 0;
     this.enabled = enabled;
     this.available = false;
     this.checked = false;
@@ -94,6 +96,23 @@ export class RemuxService {
 
   fileFor(ep) {
     return path.join(this.cacheDir, `${ep.fileId}-${ep.size}.mp4`);
+  }
+
+  /** 按 fileId 找本地产物（上传后清理配额时用） */
+  localPathForFileId(fileId) {
+    try {
+      const f = fs.readdirSync(this.cacheDir).find((x) => x.startsWith(`${fileId}-`) && x.endsWith('.mp4'));
+      return f ? path.join(this.cacheDir, f) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** 预封装调度用：这集是否还需要处理 */
+  needsWork(ep) {
+    if (!this.ready) return false;
+    if (this.status(ep).playable) return false;
+    return !this.jobs.has(ep.fileId);
   }
 
   /** 远端是否已有（每个进程生命周期只查一次） */
@@ -274,6 +293,10 @@ export class RemuxService {
           upload.state = 'done';
           upload.error = null;
         }
+        if (this.store) {
+          this.store.record(ep, remote);
+          await this.store.evict((fileId) => this.localPathForFileId(fileId));
+        }
       }
       return ok;
     } catch {
@@ -359,13 +382,16 @@ export class RemuxService {
       return;
     }
     let total = entries.reduce((a, e) => a + e.size, 0);
-    if (total <= this.maxBytes) return;
+    let count = entries.length;
     entries.sort((a, b) => a.at - b.at);
     for (const e of entries) {
-      if (total <= this.maxBytes) break;
+      const overFiles = this.maxFiles > 0 && count > this.maxFiles;
+      const overBytes = this.maxBytes > 0 && total > this.maxBytes;
+      if (!overFiles && !overBytes) break;
       try {
         fs.unlinkSync(e.p);
         total -= e.size;
+        count--;
       } catch {
         /* ignore */
       }
@@ -392,7 +418,9 @@ export class RemuxService {
       count,
       bytes,
       maxBytes: this.maxBytes,
+      maxFiles: this.maxFiles,
       available: this.available,
+      store: this.store ? this.store.stats() : null,
       published: this.published.size,
       uploads: [...this.uploads.values()].filter((u) => u.state === 'uploading').length,
     };
