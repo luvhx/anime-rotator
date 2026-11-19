@@ -581,7 +581,7 @@ function showSetup() {
   link.textContent = '⚙ 打开管理界面';
   const p = document.createElement('p');
   p.className = 'hint';
-  p.textContent = '还没有配置媒体库：在管理界面填写 WebDAV 地址、扫描并选择要播的节目。';
+  p.textContent = '还没有就绪：在管理界面填写 WebDAV、扫描媒体库，并新建一个频道。';
   overlay.append(link, p);
   setStatus('未初始化：请先打开 /admin 完成配置');
   $('seriesName').textContent = '尚未配置';

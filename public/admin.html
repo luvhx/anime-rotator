@@ -64,8 +64,8 @@
         <div class="panel">
           <div class="panel-head"><h2>WebDAV 源</h2></div>
           <div class="form-grid">
-            <label>地址 <input id="cfg-baseUrl" placeholder="http://192.168.1.10:19798/dav/115/Media" /></label>
-            <label>根目录 <input id="cfg-root" placeholder="动画" /></label>
+            <label>地址 <input id="cfg-baseUrl" placeholder="http://主机:端口/dav/路径" /></label>
+            <label>根目录 <input id="cfg-root" placeholder="留空 = 地址本身" /></label>
             <label>账号 <input id="cfg-username" autocomplete="off" /></label>
             <label>密码 <input id="cfg-password" type="password" autocomplete="new-password" placeholder="留空则不修改" /></label>
             <label>超时（毫秒） <input id="cfg-timeout" type="number" min="1000" step="1000" /></label>
@@ -108,7 +108,7 @@
                 <option value="webdav">上传到 WebDAV（之后 302 直连）</option>
               </select>
             </label>
-            <label>产物目录 <input id="cfg-compat-root" placeholder="compat" /></label>
+            <label>产物目录 <input id="cfg-compat-root" placeholder="留空 = compat" /></label>
             <label>302 前缀 <input id="cfg-compat-prefix" placeholder="留空 = 沿用上面的 URL 前缀" /></label>
             <label class="check inline"><input type="checkbox" id="cfg-compat-keeplocal" /> 上传后保留本地副本</label>
           </div>
@@ -166,12 +166,6 @@
           </datalist>
         </div>
 
-        <div class="panel">
-          <div class="panel-head"><h2>频道入口地址</h2></div>
-          <div class="form-grid">
-            <label>播放器地址 <input id="cfg-playerUrl" readonly /></label>
-          </div>
-        </div>
 
         <div class="save-bar">
           <span id="saveState" class="hint">未修改</span>

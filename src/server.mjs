@@ -162,9 +162,14 @@ export function createApp(baseConfig) {
   const getConfig = () => state.config;
   const configured = () => Boolean(state.config.webdav.baseUrl);
 
+  function defaultChannelId() {
+    return state.config.channels[0]?.id || null;
+  }
+
   function getTimeline(channelId) {
     if (!state.library.episodes.length) throw new HttpError(503, '媒体库还没有索引，请先在 /admin 里配置并扫描');
-    const id = channelId || state.config.channels[0]?.id;
+    const id = channelId || defaultChannelId();
+    if (!id) throw new HttpError(503, '还没有配置频道，请先在 /admin 里编排');
     let tl = state.timelines.get(id);
     if (tl) return tl;
     const def = state.config.channels.find((c) => c.id === id);
@@ -256,7 +261,8 @@ export function createApp(baseConfig) {
     if (!configured()) {
       return json(res, { error: '还没有配置 WebDAV', setup: true, hint: '打开 /admin 完成配置' }, 503);
     }
-    const channelId = url.searchParams.get('channel') || cfg.channels[0].id;
+    const channelId = url.searchParams.get('channel') || defaultChannelId();
+    if (!channelId) return json(res, { error: '还没有配置频道', setup: true, hint: '打开 /admin 新建一个频道' }, 503);
     const tl = getTimeline(channelId);
     const now = Date.now();
     const resolved = tl.resolve(now);
@@ -287,7 +293,8 @@ export function createApp(baseConfig) {
 
   function apiSchedule(url, res) {
     const cfg = state.config;
-    const channelId = url.searchParams.get('channel') || cfg.channels[0].id;
+    const channelId = url.searchParams.get('channel') || defaultChannelId();
+    if (!channelId) throw new HttpError(503, '还没有配置频道');
     const tl = getTimeline(channelId);
     let from;
     let to;
@@ -388,8 +395,9 @@ export function createApp(baseConfig) {
     const totalMs = lib.episodes.reduce((a, e) => a + e.durationMs, 0);
     return {
       serverTime: Date.now(),
-      ready: lib.episodes.length > 0 && configured(),
+      ready: lib.episodes.length > 0 && configured() && state.config.channels.length > 0,
       configured: configured(),
+      channels: state.config.channels.length,
       version: 1,
       config: {
         webdav: {
@@ -883,7 +891,7 @@ export function createApp(baseConfig) {
           stream: { mode: state.config.stream.mode, urlPrefix: state.config.stream.urlPrefix },
           channels: state.config.channels.map((c) => ({ id: c.id, name: c.name, description: c.description, mode: c.mode })),
           library: { series: state.library.series.length, episodes: state.library.episodes.length },
-          ready: state.library.episodes.length > 0 && configured(),
+          ready: state.library.episodes.length > 0 && configured() && state.config.channels.length > 0,
         });
       }
 

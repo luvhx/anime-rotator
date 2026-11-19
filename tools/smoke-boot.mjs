@@ -14,17 +14,20 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rotator-boot-'));
 const port = 18000 + Math.floor(Math.random() * 1000);
 
-const config = {
-  server: { host: '127.0.0.1', port, publicDir: path.join(ROOT, 'public') },
-  timezone: 'Asia/Shanghai',
-  webdav: { baseUrl: '', root: '动画', username: '', password: '', timeoutMs: 5000 },
-  paths: { library: path.join(tmp, 'library.json'), durations: path.join(tmp, 'durations.json') },
-  stream: { mode: 'proxy' },
-  channels: [
-    { id: 'main', name: '主线', mode: 'loop', anchor: '2026-01-01T00:00:00+08:00', program: [{ rule: { type: 'sequential' } }] },
-  ],
-};
-fs.writeFileSync(path.join(tmp, 'config.json'), JSON.stringify(config, null, 2));
+function writeConfig(channels) {
+  const config = {
+    server: { host: '127.0.0.1', port, publicDir: path.join(ROOT, 'public') },
+    timezone: 'Asia/Shanghai',
+    webdav: { baseUrl: '', root: '', username: '', password: '', timeoutMs: 5000 },
+    paths: { library: path.join(tmp, 'library.json'), durations: path.join(tmp, 'durations.json') },
+    stream: { mode: 'proxy' },
+    channels,
+  };
+  fs.writeFileSync(path.join(tmp, 'config.json'), JSON.stringify(config, null, 2));
+}
+writeConfig([
+  { id: 'main', name: '主线', mode: 'loop', anchor: '2026-01-01T00:00:00+08:00', program: [{ rule: { type: 'sequential' } }] },
+]);
 
 let fails = 0;
 const check = (ok, msg, extra = '') => {
@@ -82,6 +85,31 @@ try {
     const cfg = await (await fetch(base + '/api/config')).json();
     check(cfg.ready === false, '/api/config 暴露 ready=false');
   }
+  // 第二个场景：0 个频道（默认状态）也应该能正常启动
+  child.kill('SIGTERM');
+  await wait(500);
+  writeConfig([]);
+  const child2 = spawn(process.execPath, [path.join(ROOT, 'src/cli/serve.mjs'), '--config', path.join(tmp, 'config.json')], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let stderr2 = '';
+  child2.stderr.on('data', (d) => {
+    stderr2 += d.toString();
+  });
+  const ready2 = await waitReady();
+  check(ready2, '0 频道也能启动', ready2 ? '' : stderr2.slice(-200));
+  if (ready2) {
+    const st2 = await (await fetch(base + '/api/admin/state')).json();
+    check(Array.isArray(st2.channels) && st2.channels.length === 0, '0 频道时管理状态为空列表');
+    const now2 = await fetch(base + '/api/now');
+    const nowJson2 = await now2.json();
+    check(now2.status === 503 && nowJson2.setup === true, '0 频道时播放接口提示配置', now2.status);
+    const admin2 = await fetch(base + '/admin/');
+    check(admin2.status === 200, '0 频道时管理界面可访问', admin2.status);
+  }
+  child2.kill('SIGTERM');
+  await wait(300);
+  child2.kill('SIGKILL');
 } finally {
   child.kill('SIGTERM');
   await wait(300);

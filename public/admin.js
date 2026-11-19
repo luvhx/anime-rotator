@@ -244,7 +244,12 @@ async function renderNowPlaying() {
   const box = $('#nowPlaying');
   if (!S.state.ready) {
     box.innerHTML = '';
-    box.append(el('span', {}, '媒体库还没准备好：先在「配置」里填 WebDAV，再点「开始扫描」。'));
+    const reason = S.draft.channels.length === 0
+      ? '还没有频道：先去「编排」新建一个，再回来这里看直播状态。'
+      : !S.state.configured
+        ? '还没配置 WebDAV：先在「配置」里填好地址，再点「开始扫描」。'
+        : '媒体库还没索引：先在「概览」里点「开始扫描」。';
+    box.append(el('span', {}, reason));
     return;
   }
   try {
@@ -367,7 +372,7 @@ function fillConfigForm() {
       : '服务端会按节目单提前把「正在播」和「下一集」转封装并上传，客户端打开即可播放。';
   }
   $('#cfg-compat-publish').value = compat.publish || 'local';
-  $('#cfg-compat-root').value = compat.webdav?.root || 'compat';
+  $('#cfg-compat-root').value = S.state.settings?.compat?.webdav?.root || '';
   $('#cfg-compat-prefix').value = compat.urlPrefix || '';
   $('#cfg-compat-keeplocal').checked = compat.keepLocal !== false;
   $('#cfg-compat-baseUrl').value = compat.webdav?.baseUrl || '';
@@ -391,7 +396,6 @@ function fillConfigForm() {
   $('#cfg-tmdb-key').value = '';
   $('#cfg-tmdb-key').placeholder = S.state.config.tmdb.enabled ? '已设置，留空则不修改' : '未配置';
   $('#cfg-tmdb-token').value = '';
-  $('#cfg-playerUrl').value = `${location.origin}/`;
   updateSaveHints();
 }
 
@@ -979,6 +983,10 @@ function fillPreviewChannels() {
 async function runPreview() {
   const body = $('#previewBody');
   body.innerHTML = '';
+  if (S.draft.channels.length === 0) {
+    body.append(el('div', { class: 'empty' }, '还没有频道，先去「编排」新建一个。'));
+    return;
+  }
   body.append(el('div', { class: 'empty' }, '计算中…'));
   try {
     const data = await api('/api/admin/preview', {

@@ -6,15 +6,11 @@
   },
   "timezone": "Asia/Shanghai",
   "webdav": {
-    "baseUrl": "http://192.168.1.10:19798/dav/115/Media",
-    "root": "动画",
+    "baseUrl": "",
+    "root": "",
     "username": "your-account@example.com",
     "password": "your-password",
     "timeoutMs": 20000
-  },
-  "paths": {
-    "library": "data/library.json",
-    "durations": "data/durations.json"
   },
   "stream": {
     "mode": "redirect",

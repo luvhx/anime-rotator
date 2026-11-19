@@ -186,9 +186,7 @@ export function finalizeConfig(config, root = PROJECT_ROOT, { allowIncomplete = 
     ids.add(ch.id);
     return ch;
   });
-  if (config.channels.length === 0) {
-    config.channels = [normalizeChannel({ id: 'main', name: '全部轮播', program: [{ rule: { type: 'sequential' } }] })];
-  }
+  // 频道完全由用户创建：不做默认补全，0 个频道是合法状态
 
   // 默认流前缀 = WebDAV 根地址
   if (!config.stream.urlPrefix) config.stream.urlPrefix = config.webdav.baseUrl || null;
