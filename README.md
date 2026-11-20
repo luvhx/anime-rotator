@@ -34,7 +34,8 @@ WebDAV 媒体库 ──scan──> data/library.json（含每集真实时长）
 | 自定义 URL 前缀 | 前端读取视频文件的地址前缀可配置（CDN、反代、内网域名），支持逐请求覆盖 |
 | 前端自动同步 | 打开即在播，每秒校正漂移，可手动「重新同步」；播放器回写真实时长帮助索引自愈 |
 | Web 管理界面 | `/admin` 里改配置、勾选节目、可视化编辑编排、实时预览节目单，改完即生效 |
-| TMDB 元数据 | 封面、简介、评分、播出日期与剧集标题，自动按中文名匹配，也可手动纠正 |
+| TMDB 元数据 | 封面、简介、评分、年份、类型、播出信息；自动按中文名匹配，可手动纠正 |
+| TMDB 筛选 | 按年份 / 评分 / 类型 / 匹配状态筛选节目库，也能作为频道的选片条件 |
 | 字幕自动加载 | 外挂 `.ass/.srt` 与 MKV 内挂字幕统一转 WebVTT 挂到 `<track>`，可一键开关 |
 | 兼容模式 | MKV 按需转封装成 MP4（视频流复制 + 音频 AAC + `hvc1`），解决 iOS/Safari 完全放不了 MKV 的问题 |
 
@@ -86,7 +87,7 @@ npm test                             # 编排引擎自检（不联网，CI 同�
 
 ### 概览
 
-库规模、频道数、参与编排的节目数、TMDB 状态；「现在在播」实时预览；扫描入口（可选是否解析时长）与进度条。
+库规模、频道数、参与编排的节目数；「现在在播」实时预览；扫描入口（可选是否解析时长）与进度条；**TMDB 信息同步**（带进度条，同步后可用元数据筛选）。
 
 ### 配置
 
@@ -104,6 +105,8 @@ npm test                             # 编排引擎自检（不联网，CI 同�
 
 - 默认「全部参与」，取消勾选任意一部即切换为「只播勾选的」；
 - 支持搜索、全选、清空、选中当前筛选结果；
+- **筛选**：年份起止、最低评分、TMDB 类型、是否已匹配 TMDB（先到「概览 → 同步 TMDB 信息」拉一次数据）；
+- 卡片上直接显示「年份 · 评分 · 首个类型」，没匹配到的只显示本地信息；
 - 封面 / 评分 / 原名来自 TMDB，滚动到可视区域才按批拉取（一次 24 部），带磁盘缓存。
 
 ### 编排
@@ -115,6 +118,7 @@ npm test                             # 编排引擎自检（不联网，CI 同�
 - 频道名称、模式（`loop` 循环 / `daily` 按日）、锚点时间、日切时间；
 - 编排段可视化编辑：规则类型、段长度（集数 / 小时 / 分钟 / 填满当天 / 播完一轮）、段名；
 - `daypart` 支持逐时段配置子规则（可跨零点，如 22:00 → 06:00）；
+- **选片条件（TMDB）**：年份起止、最低评分、类型，只有命中的剧才进入该频道；
 - 一键套用模板：整库连播 / 随机+轮播 / 电视台日编排 / 每日一部；
 - 新建、删除、上下移动段落与频道。
 
@@ -410,7 +414,12 @@ if (Math.abs(video.currentTime - target) > 4) video.currentTime = target;  // �
   "name": "深夜档",
   "mode": "daily",
   "dayStart": "06:00",          // 播出日从 06:00 到次日 06:00（默认 00:00）
-  "library": { "series": ["命运石之门", "寒蝉"], "exclude": ["孤独摇滚"], "minEpisodes": 12 },
+  "library": {
+    "series": ["命运石之门", "寒蝉"],
+    "exclude": ["孤独摇滚"],
+    "minEpisodes": 12,
+    "tmdb": { "yearFrom": 2015, "minVote": 7.5, "genres": ["动画", "科幻"] }   // 按 TMDB 元数据选片
+  },
   "weights": { "冰菓": 3, "夏日重现": 1 },
   "program": [ ... ]
 }
@@ -489,6 +498,8 @@ if (Math.abs(video.currentTime - target) > 4) video.currentTime = target;  // �
 | GET | `/api/admin/tmdb/search?q=` | 手动匹配时搜索 TMDB |
 | POST | `/api/admin/tmdb/test` | 测试 TMDB Key 是否可用 |
 | POST | `/api/admin/series/:id/tmdb` | 手动指定 TMDB ID `{tmdbId}` |
+| POST | `/api/admin/tmdb/sync` | 同步全部剧集的 TMDB 信息（后台任务，进度见 `/api/admin/state`） |
+| GET | `/api/admin/tmdb/facets` | 类型/年份分布 + 匹配统计（筛选下拉用） |
 | GET | `/subtitle/<fileId>` | 该集字幕的 WebVTT（外挂转换 / ffmpeg 抽取，带缓存） |
 | GET | `/api/remux/<fileId>` | 转封装状态 `{state, playable, directUrl, uploadProgress}`（idle/working/ready/uploading/published/error/unavailable） |
 | POST | `/api/remux/<fileId>` | 启动转封装（幂等） |
@@ -591,6 +602,7 @@ location /media/ {
 ├── tools/
 │   ├── selftest.mjs            # 编排引擎自检（CI，不联网）
 │   ├── selftest-subtitles.mjs  # 字幕转换自检（CI，不联网）
+│   ├── selftest-tmdb.mjs       # TMDB 索引/筛选自检（CI，不联网）
 │   ├── smoke-boot.mjs          # 冷启动冒烟（CI，不联网）
 │   ├── smoke-api.mjs           # 播放接口端到端
 │   ├── smoke-frontend.mjs      # 播放器 DOM 冒烟
@@ -602,6 +614,7 @@ location /media/ {
     ├── library.mjs             # 扫描、索引、时长缓存、库对象
     ├── scheduler.mjs           # 编排规则 + 时间轴（loop / daily）
     ├── tmdb.mjs                # TMDB 客户端（搜索/详情/季集，带缓存与节流）
+    ├── tmdb-index.mjs          # TMDB 信息索引：同步、持久化、按年份/评分/类型筛选
     ├── settings.mjs            # 运行期设置：读写、校验、与配置合并
     ├── stream.mjs              # 302 直链、前缀拼接、代理转发
     ├── server.mjs              # 路由、公共 API、管理 API、扫描任务

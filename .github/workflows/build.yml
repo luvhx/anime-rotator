@@ -44,6 +44,9 @@ jobs:
       - name: 预封装调度自检
         run: node tools/selftest-prefetch.mjs
 
+      - name: TMDB 索引自检
+        run: node tools/selftest-tmdb.mjs
+
       - name: 冷启动冒烟（未配置状态）
         run: node tools/smoke-boot.mjs
 

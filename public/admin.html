@@ -47,6 +47,18 @@
 
         <div class="panel">
           <div class="panel-head">
+            <h2>TMDB 信息</h2>
+            <div class="row-gap">
+              <span class="pill" id="tmdbIndexPill">—</span>
+              <button class="btn small" id="btnTmdbSync">同步 TMDB 信息</button>
+            </div>
+          </div>
+          <div class="bar"><div class="bar-fill" id="tmdbBar"></div></div>
+          <p class="hint" id="tmdbSyncHint">同步后可按年份 / 评分 / 类型筛选节目，也能在编排里按 TMDB 条件选片。首次同步每部约 0.3 秒。</p>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
             <h2>媒体库扫描</h2>
             <div class="row-gap">
               <label class="check small"><input type="checkbox" id="scanProbe" checked /> 解析时长（慢）</label>
@@ -177,6 +189,23 @@
       <section class="view" data-view="series">
         <div class="toolbar">
           <input id="seriesSearch" type="search" placeholder="搜索节目名…" />
+          <input id="flt-yearFrom" type="number" min="1950" max="2100" placeholder="年份 ≥" style="width: 96px" />
+          <input id="flt-yearTo" type="number" min="1950" max="2100" placeholder="年份 ≤" style="width: 96px" />
+          <select id="flt-minVote">
+            <option value="0">评分不限</option>
+            <option value="6">≥ 6.0</option>
+            <option value="7">≥ 7.0</option>
+            <option value="7.5">≥ 7.5</option>
+            <option value="8">≥ 8.0</option>
+            <option value="8.5">≥ 8.5</option>
+          </select>
+          <select id="flt-genre"><option value="">全部类型</option></select>
+          <select id="flt-matched">
+            <option value="">全部</option>
+            <option value="1">已匹配 TMDB</option>
+            <option value="0">未匹配</option>
+          </select>
+          <button class="btn ghost small" id="flt-reset">重置</button>
           <button class="btn ghost small" id="selAll">全选</button>
           <button class="btn ghost small" id="selNone">清空</button>
           <button class="btn ghost small" id="selFiltered">选中筛选结果</button>

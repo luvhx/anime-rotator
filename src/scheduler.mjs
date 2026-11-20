@@ -33,7 +33,7 @@ const DEFAULT_SEGMENT_COUNT = 12;
  * 规则工厂
  * ------------------------------------------------------------------ */
 
-function seriesOfEarly(library, channel) {
+function seriesOfEarly(library, channel, tmdbIndex = null) {
   const filter = channel.library || {};
   let list = library.series.slice();
   if (Array.isArray(filter.series) && filter.series.length > 0) {
@@ -48,6 +48,8 @@ function seriesOfEarly(library, channel) {
     list = list.filter((s) => !drop.has(s.id));
   }
   if (filter.minEpisodes) list = list.filter((s) => s.episodes.length >= filter.minEpisodes);
+  // 按 TMDB 元数据选片（年份/评分/类型）
+  if (filter.tmdb && tmdbIndex) list = tmdbIndex.filterSeries(list, filter.tmdb);
   list = list.filter((s) => s.episodes.length > 0);
   return list;
 }
@@ -314,7 +316,7 @@ export class ChannelTimeline {
    * @param {import('./library.mjs').Library} opts.library
    * @param {string} opts.tz
    */
-  constructor({ channel, library, tz = 'Asia/Shanghai' }) {
+  constructor({ channel, library, tz = 'Asia/Shanghai', tmdbIndex = null }) {
     this.channel = normalizeChannel(channel);
     this.library = library;
     this.tz = tz;
@@ -323,7 +325,8 @@ export class ChannelTimeline {
     this.dayOffsetMs = (this.channel.dayStartSec || 0) * 1000;
     this._cycle = null;
     this._dayCache = new Map();
-    this._series = seriesOfEarly(library, this.channel);
+    this._tmdbIndex = tmdbIndex;
+    this._series = seriesOfEarly(library, this.channel, tmdbIndex);
   }
 
   get anchorMs() {

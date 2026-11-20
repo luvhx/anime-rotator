@@ -17,6 +17,7 @@ import {
 } from './settings.mjs';
 import { settingsFromConfig, finalizeConfig } from './config.mjs';
 import { TmdbClient } from './tmdb.mjs';
+import { TmdbIndex } from './tmdb-index.mjs';
 import { SubtitleService } from './subtitles.mjs';
 import { RemuxService } from './remux.mjs';
 import { CompatStore } from './compat-store.mjs';
@@ -57,6 +58,8 @@ export function createApp(baseConfig) {
     library: Library.empty(),
     timelines: new Map(),
     tmdb: null,
+    tmdbIndex: null,
+    tmdbSync: { running: false, done: 0, total: 0, failed: 0, error: null },
     tmdbResolved: new Map(),
     subs: null,
     remux: null,
@@ -80,6 +83,10 @@ export function createApp(baseConfig) {
     state.tmdb = new TmdbClient({
       ...cfg.tmdb,
       cacheFile: path.join(path.dirname(cfg.paths.library), 'tmdb-cache.json'),
+    });
+    state.tmdbIndex = new TmdbIndex({
+      file: path.join(path.dirname(cfg.paths.library), 'tmdb-index.json'),
+      tmdb: state.tmdb,
     });
     state.tmdbResolved.clear();
     state.timelines.clear();
@@ -174,7 +181,7 @@ export function createApp(baseConfig) {
     if (tl) return tl;
     const def = state.config.channels.find((c) => c.id === id);
     if (!def) throw new HttpError(404, `频道不存在：${id}`);
-    tl = new ChannelTimeline({ channel: def, library: state.library, tz: state.config.timezone });
+    tl = new ChannelTimeline({ channel: def, library: state.library, tz: state.config.timezone, tmdbIndex: state.tmdbIndex });
     state.timelines.set(id, tl);
     return tl;
   }
@@ -414,7 +421,14 @@ export function createApp(baseConfig) {
           embedCredentials: cfg.stream.embedCredentials,
         },
         timezone: cfg.timezone,
-        tmdb: { language: cfg.tmdb.language, enabled: state.tmdb.enabled, mode: state.tmdb.mode, lastError: state.tmdb.lastError },
+        tmdb: {
+          language: cfg.tmdb.language,
+          enabled: state.tmdb.enabled,
+          mode: state.tmdb.mode,
+          lastError: state.tmdb.lastError,
+          index: state.tmdbIndex.stats(state.library.series.length),
+          sync: state.tmdbSync,
+        },
         subtitles: { enabled: cfg.subtitles?.enabled !== false, ffmpeg: Boolean(state.subs?.ffmpegAvailable) },
         remux: {
           enabled: cfg.remux?.enabled !== false,
@@ -620,7 +634,7 @@ export function createApp(baseConfig) {
     const at = draft.at ? toMs(draft.at) : Date.now();
     let tl;
     try {
-      tl = new ChannelTimeline({ channel: def, library: state.library, tz: cfg.timezone });
+      tl = new ChannelTimeline({ channel: def, library: state.library, tz: cfg.timezone, tmdbIndex: state.tmdbIndex });
       const stats = tl.stats();
       const resolved = tl.resolve(at);
       const items = tl.schedule(at, at + hours * 3600_000, 300);
@@ -699,6 +713,20 @@ export function createApp(baseConfig) {
       const series = state.library.seriesById.get(id);
       if (!series) return;
       const info = await resolveTmdb(series);
+      if (info?.id) {
+        state.tmdbIndex.set(series.id, {
+          tmdbId: info.id,
+          name: info.name,
+          year: info.year,
+          vote: info.vote,
+          genres: info.genres || [],
+          status: info.status,
+          poster: info.poster,
+          overview: info.overview,
+          source: info.source,
+        });
+        state.tmdbIndex.save();
+      }
       posters[id] = info
         ? {
             tmdbId: info.id || null,
@@ -724,8 +752,25 @@ export function createApp(baseConfig) {
     const sel = normalizeSelection(state.config.selection);
     const selected = new Set(sel.series);
     const all = state.library.series;
-    const filtered = q ? all.filter((s) => s.displayName.toLowerCase().includes(q.toLowerCase())) : all;
-    const page = filtered.slice(offset, offset + limit).map((s) => ({
+    let filtered = q ? all.filter((s) => s.displayName.toLowerCase().includes(q.toLowerCase())) : all;
+
+    // TMDB 条件筛选
+    const tmdbFilter = {
+      yearFrom: Number(url.searchParams.get('yearFrom')) || 0,
+      yearTo: Number(url.searchParams.get('yearTo')) || 0,
+      minVote: Number(url.searchParams.get('minVote')) || 0,
+      genres: (url.searchParams.get('genres') || '').split(',').map((x) => x.trim()).filter(Boolean),
+      requireMatch: url.searchParams.get('matched') === '1',
+    };
+    if (url.searchParams.get('matched') === '0') {
+      filtered = filtered.filter((s) => !state.tmdbIndex.get(s.id)?.tmdbId);
+    } else {
+      filtered = state.tmdbIndex.filterSeries(filtered, tmdbFilter);
+    }
+
+    const page = filtered.slice(offset, offset + limit).map((s) => {
+      const t = state.tmdbIndex.get(s.id);
+      return {
       id: s.id,
       name: s.displayName,
       tmdbId: s.tmdbId,
@@ -734,7 +779,11 @@ export function createApp(baseConfig) {
       durationMs: s.episodes.reduce((a, e) => a + e.durationMs, 0),
       size: s.episodes.reduce((a, e) => a + e.size, 0),
       selected: sel.mode === 'include' ? selected.has(s.id) : true,
-    }));
+        tmdb: t
+          ? { tmdbId: t.tmdbId, year: t.year, vote: t.vote, genres: t.genres || [], poster: t.poster || null, source: t.source || null }
+          : null,
+      };
+    });
     return json(res, {
       total: all.length,
       matches: filtered.length,
@@ -777,6 +826,41 @@ export function createApp(baseConfig) {
         ...episodeView(ep),
         tmdb: tmdbEpisodes[`${ep.season}-${ep.episode}`] || null,
       })),
+    });
+  }
+
+  async function apiAdminTmdbSync(req, res) {
+    if (!state.tmdb.enabled) throw new HttpError(400, '还没有配置 TMDB API Key');
+    if (state.tmdbSync.running) throw new HttpError(409, 'TMDB 同步进行中');
+    const body = await readJson(req).catch(() => ({}));
+    const total = state.library.series.length;
+    state.tmdbSync = { running: true, done: 0, total, failed: 0, current: null, startedAt: Date.now(), error: null, finishedAt: null };
+    state.tmdbIndex
+      .syncAll(state.library.series, {
+        force: Boolean(body.force),
+        concurrency: 3,
+        onProgress: (done, all, name, failed) => {
+          Object.assign(state.tmdbSync, { done, total: all, current: name, failed });
+        },
+      })
+      .then(() => {
+        state.tmdbSync.running = false;
+        state.tmdbSync.finishedAt = Date.now();
+        state.tmelines?.clear?.();
+        state.timelines.clear();
+      })
+      .catch((err) => {
+        state.tmdbSync.running = false;
+        state.tmdbSync.error = err.message;
+      });
+    return json(res, { ok: true, started: true, total });
+  }
+
+  function apiAdminTmdbFacets(url, res) {
+    return json(res, {
+      ...state.tmdbIndex.facets(state.library.series),
+      sync: state.tmdbSync,
+      enabled: state.tmdb.enabled,
     });
   }
 
@@ -925,6 +1009,8 @@ export function createApp(baseConfig) {
         }
         if (req.method === 'GET') return await apiAdminSeriesDetail(url, res, rest);
       }
+      if (pathname === '/api/admin/tmdb/sync' && req.method === 'POST') return await apiAdminTmdbSync(req, res);
+      if (pathname === '/api/admin/tmdb/facets') return apiAdminTmdbFacets(url, res);
       if (pathname === '/api/admin/tmdb/search') return await apiAdminTmdbSearch(url, res);
       if (pathname === '/api/admin/tmdb/test' && req.method === 'POST') return await apiAdminTmdbTest(req, res);
 

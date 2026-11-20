@@ -19,6 +19,8 @@ const S = {
   posters: new Map(),
   selected: new Set(),
   allSeries: [],
+  filters: { yearFrom: '', yearTo: '', minVote: '0', genre: '', matched: '' },
+  tmdbSyncTimer: null,
   allIds: [],
   activeChannel: null,
   preview: null,
@@ -238,6 +240,40 @@ function renderOverview() {
   }
   renderNowPlaying();
   renderScan();
+  renderTmdbIndex();
+}
+
+function renderTmdbIndex() {
+  const idx = S.state.config.tmdb?.index || { total: 0, matched: 0 };
+  const sync = S.state.config.tmdb?.sync || {};
+  const pill = $('#tmdbIndexPill');
+  if (pill) {
+    pill.textContent = `已匹配 ${idx.matched || 0} / ${idx.total || 0}`;
+    pill.className = 'pill' + (idx.matched > 0 ? ' ok' : '');
+  }
+  const bar = $('#tmdbBar');
+  const hint = $('#tmdbSyncHint');
+  const btn = $('#btnTmdbSync');
+  if (!bar) return;
+  if (sync.running) {
+    const pct = sync.total ? Math.round((sync.done / sync.total) * 100) : 0;
+    bar.style.width = pct + '%';
+    bar.style.background = '';
+    if (hint) hint.textContent = `同步中 ${sync.done}/${sync.total}（${pct}%）· ${sync.current || ''}${sync.failed ? ` · 失败 ${sync.failed}` : ''}`;
+    if (btn) { btn.disabled = true; btn.textContent = '同步中…'; }
+  } else {
+    bar.style.width = idx.matched > 0 ? '100%' : '0';
+    if (btn) { btn.disabled = false; btn.textContent = '同步 TMDB 信息'; }
+    if (hint) {
+      hint.textContent = !S.state.config.tmdb?.enabled
+        ? '还没有配置 TMDB API Key：去「配置」里填一个，才能拉取年份/评分/类型。'
+        : sync.error
+          ? `上次同步失败：${sync.error}`
+          : sync.finishedAt
+            ? `上次同步完成：${new Date(sync.finishedAt).toLocaleString()}，已匹配 ${idx.matched} 部`
+            : '同步后可按年份 / 评分 / 类型筛选节目，也能在编排里按 TMDB 条件选片。';
+    }
+  }
 }
 
 async function renderNowPlaying() {
@@ -501,8 +537,36 @@ function bindConfigForm() {
 
 /* ------------------------------ 媒体库 ------------------------------ */
 
+async function loadFacets() {
+  try {
+    const f = await api('/api/admin/tmdb/facets');
+    const sel = $('#flt-genre');
+    if (!sel) return;
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">全部类型</option>';
+    for (const g of f.genres || []) {
+      const opt = el('option', { value: g.name }, `${g.name} (${g.count})`);
+      if (g.name === cur) opt.selected = true;
+      sel.append(opt);
+    }
+  } catch {
+    /* TMDB 未配置时忽略 */
+  }
+}
+
+function buildSeriesQuery(q = '') {
+  const f = S.filters || {};
+  const p = new URLSearchParams({ limit: '500', q });
+  if (f.yearFrom) p.set('yearFrom', f.yearFrom);
+  if (f.yearTo) p.set('yearTo', f.yearTo);
+  if (f.minVote && f.minVote !== '0') p.set('minVote', f.minVote);
+  if (f.genre) p.set('genres', f.genre);
+  if (f.matched) p.set('matched', f.matched);
+  return p.toString();
+}
+
 async function loadSeries({ q = '' } = {}) {
-  const data = await api(`/api/admin/series?limit=500&q=${encodeURIComponent(q)}`);
+  const data = await api(`/api/admin/series?${buildSeriesQuery(q)}`);
   S.allSeries = data.series;
   S.allIds = data.series.map((s) => s.id);
   const sel = normalizeSelection(S.draft.selection);
@@ -540,6 +604,13 @@ function renderSeries() {
           el('span', {}, `${s.episodes} 集`),
           el('span', {}, fmtDur(s.durationMs)),
         ),
+        s.tmdb?.tmdbId
+          ? el(
+              'div',
+              { class: 'meta' },
+              el('span', {}, [s.tmdb.year, s.tmdb.vote ? `★${Number(s.tmdb.vote).toFixed(1)}` : null, (s.tmdb.genres || [])[0]].filter(Boolean).join(' · ')),
+            )
+          : null,
       ),
     );
     grid.append(card);
@@ -714,6 +785,43 @@ function renderChannelEditor() {
             },
           }))
         : null,
+    ),
+    el(
+      'div',
+      { class: 'form-grid mt' },
+      el('label', {}, '选片：年份 ≥', el('input', {
+        type: 'number', min: '1950', max: '2100',
+        value: ch.library?.tmdb?.yearFrom || '',
+        oninput: (e) => {
+          ch.library = { ...(ch.library || {}), tmdb: { ...(ch.library?.tmdb || {}), yearFrom: Number(e.target.value) || undefined } };
+          markDirty('channels');
+        },
+      })),
+      el('label', {}, '选片：年份 ≤', el('input', {
+        type: 'number', min: '1950', max: '2100',
+        value: ch.library?.tmdb?.yearTo || '',
+        oninput: (e) => {
+          ch.library = { ...(ch.library || {}), tmdb: { ...(ch.library?.tmdb || {}), yearTo: Number(e.target.value) || undefined } };
+          markDirty('channels');
+        },
+      })),
+      el('label', {}, '选片：最低评分', el('input', {
+        type: 'number', min: '0', max: '10', step: '0.1',
+        value: ch.library?.tmdb?.minVote || '',
+        oninput: (e) => {
+          ch.library = { ...(ch.library || {}), tmdb: { ...(ch.library?.tmdb || {}), minVote: Number(e.target.value) || undefined } };
+          markDirty('channels');
+        },
+      })),
+      el('label', {}, '选片：类型（逗号分隔）', el('input', {
+        value: (ch.library?.tmdb?.genres || []).join(','),
+        placeholder: '例如 动画,科幻',
+        oninput: (e) => {
+          const genres = e.target.value.split(',').map((x) => x.trim()).filter(Boolean);
+          ch.library = { ...(ch.library || {}), tmdb: { ...(ch.library?.tmdb || {}), genres } };
+          markDirty('channels');
+        },
+      })),
     ),
     el(
       'div',
@@ -1199,7 +1307,10 @@ function switchTab(tab) {
   S.tab = tab;
   for (const b of $$('.tab')) b.classList.toggle('active', b.dataset.tab === tab);
   for (const v of $$('.view')) v.classList.toggle('active', v.dataset.view === tab);
-  if (tab === 'series') loadSeries({ q: $('#seriesSearch').value });
+  if (tab === 'series') {
+    loadFacets();
+    loadSeries({ q: $('#seriesSearch').value });
+  }
   if (tab === 'channels') {
     renderChannelList();
     renderChannelEditor();
@@ -1266,9 +1377,33 @@ async function boot() {
     markDirty('series');
   });
   let searchTimer = null;
-  $('#seriesSearch').addEventListener('input', (e) => {
+  const reloadSeries = () => {
     clearTimeout(searchTimer);
-    searchTimer = setTimeout(() => loadSeries({ q: e.target.value.trim() }), 250);
+    searchTimer = setTimeout(() => loadSeries({ q: $('#seriesSearch').value.trim() }), 200);
+  };
+  $('#seriesSearch').addEventListener('input', reloadSeries);
+  const readFilters = () => {
+    S.filters = {
+      yearFrom: $('#flt-yearFrom').value.trim(),
+      yearTo: $('#flt-yearTo').value.trim(),
+      minVote: $('#flt-minVote').value,
+      genre: $('#flt-genre').value,
+      matched: $('#flt-matched').value,
+    };
+    reloadSeries();
+  };
+  for (const id of ['flt-yearFrom', 'flt-yearTo', 'flt-minVote', 'flt-genre', 'flt-matched']) {
+    $(`#${id}`).addEventListener('input', readFilters);
+    $(`#${id}`).addEventListener('change', readFilters);
+  }
+  $('#flt-reset').addEventListener('click', () => {
+    S.filters = { yearFrom: '', yearTo: '', minVote: '0', genre: '', matched: '' };
+    $('#flt-yearFrom').value = '';
+    $('#flt-yearTo').value = '';
+    $('#flt-minVote').value = '0';
+    $('#flt-genre').value = '';
+    $('#flt-matched').value = '';
+    reloadSeries();
   });
   renderAll();
   if (S.state.scan.running) pollScan();
