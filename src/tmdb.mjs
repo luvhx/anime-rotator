@@ -11,6 +11,9 @@ import path from 'node:path';
  */
 
 const API_BASE = 'https://api.themoviedb.org/3';
+
+/** 缓存结构版本：改动搜索结果结构时递增，让旧缓存自然失效 */
+const CACHE_VERSION = 'v2';
 const IMAGE_BASE = 'https://image.tmdb.org/t/p';
 
 /** 全角标点 / 空白归一，便于中文标题匹配 */
@@ -99,7 +102,10 @@ export class TmdbClient {
     if (!this.cacheFile || !fs.existsSync(this.cacheFile)) return;
     try {
       const raw = JSON.parse(fs.readFileSync(this.cacheFile, 'utf8'));
-      for (const [k, v] of Object.entries(raw.entries || {})) this.memory.set(k, v);
+      for (const [k, v] of Object.entries(raw.entries || {})) {
+        // 只接受当前版本的键：v1 的搜索结果没有 genres，会让索引一直缺类型
+        if (k.startsWith(`${CACHE_VERSION}:`)) this.memory.set(k, v);
+      }
     } catch {
       /* 缓存损坏忽略 */
     }
@@ -119,15 +125,19 @@ export class TmdbClient {
     this.dirty = false;
   }
 
+  _key(key) {
+    return `${CACHE_VERSION}:${key}`;
+  }
+
   _cached(key) {
-    const hit = this.memory.get(key);
+    const hit = this.memory.get(this._key(key));
     if (!hit) return null;
     if (Date.now() - hit.t > this.ttlMs) return null;
     return hit.v;
   }
 
   _store(key, value) {
-    this.memory.set(key, { t: Date.now(), v: value });
+    this.memory.set(this._key(key), { t: Date.now(), v: value });
     this.dirty = true;
     if (this.memory.size % 20 === 0) this.save();
   }
