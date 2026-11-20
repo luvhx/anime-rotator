@@ -95,7 +95,7 @@ npm test                             # 编排引擎自检（不联网，CI 同�
 | --- | --- |
 | WebDAV 源 | 地址、根目录、账号、密码、超时 |
 | 取流方式 | `proxy`（后端转发）/ `redirect`（302 直链）、URL 前缀、鉴权 Token、直链内嵌凭据 |
-| 时区 / TMDB | 编排时区、TMDB 语言、API Key（v3）或 Read Token（v4），带「测试连接」 |
+| 时区 / TMDB | 编排时区、TMDB 语言、API Key（v3）或 Read Token（v4），带「测试连接」；`tmdb.baseUrl` 可换镜像、`tmdb.concurrency` 调并发 |
 
 密码与 Key 保存后不会回显（接口只返回 `passwordSet: true`），留空表示不修改。
 

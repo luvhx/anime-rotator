@@ -127,41 +127,47 @@ export class TmdbIndex {
     if (!this.tmdb?.enabled) return null;
     if (!force && !this.isStale(series.id)) return this.map.get(series.id);
 
-    let tmdbId = series.tmdbId || null;
-    let source = tmdbId ? 'tag' : null;
-
-    if (!tmdbId) {
-      const match = await this.tmdb.matchSeries(series.displayName || series.name).catch(() => null);
-      if (match && (match.status === 'matched' || match.status === 'low-confidence')) {
-        tmdbId = match.best?.id || null;
-        source = match.status === 'matched' ? 'auto' : 'low-confidence';
+    // 1) 目录名里带 {tmdb-ID}：直接查详情
+    if (series.tmdbId) {
+      const details = await this.tmdb.tvDetails(series.tmdbId).catch(() => null);
+      if (!details) {
+        this.set(series.id, { tmdbId: series.tmdbId, source: 'tag', error: 'details-failed' });
+        return this.map.get(series.id);
       }
+      this.set(series.id, {
+        tmdbId: details.id,
+        name: details.name,
+        originalName: details.originalName,
+        year: details.year,
+        vote: details.vote,
+        genres: details.genres || [],
+        status: details.status,
+        poster: details.poster,
+        overview: details.overview,
+        seasons: details.numberOfSeasons,
+        episodes: details.numberOfEpisodes,
+        source: 'tag',
+      });
+      return this.map.get(series.id);
     }
 
-    if (!tmdbId) {
+    // 2) 按中文名搜索匹配：搜索结果已包含年份/评分/类型/海报，省掉一次详情请求
+    const match = await this.tmdb.matchSeries(series.displayName || series.name).catch(() => null);
+    if (!match || (match.status !== 'matched' && match.status !== 'low-confidence') || !match.best) {
       this.set(series.id, { tmdbId: null, source: 'none' });
       return this.map.get(series.id);
     }
-
-    const details = await this.tmdb.tvDetails(tmdbId).catch(() => null);
-    if (!details) {
-      this.set(series.id, { tmdbId, source, error: 'details-failed' });
-      return this.map.get(series.id);
-    }
-
+    const best = match.best;
     this.set(series.id, {
-      tmdbId: details.id,
-      name: details.name,
-      originalName: details.originalName,
-      year: details.year,
-      vote: details.vote,
-      genres: details.genres,
-      status: details.status,
-      poster: details.poster,
-      overview: details.overview,
-      seasons: details.numberOfSeasons,
-      episodes: details.numberOfEpisodes,
-      source,
+      tmdbId: best.id,
+      name: best.name,
+      originalName: best.originalName,
+      year: best.year,
+      vote: best.vote,
+      genres: best.genres || [],
+      poster: best.poster,
+      overview: best.overview,
+      source: match.status === 'matched' ? 'auto' : 'low-confidence',
     });
     return this.map.get(series.id);
   }
@@ -171,7 +177,7 @@ export class TmdbIndex {
    * @param {object[]} seriesList
    * @param {{onProgress?:Function, concurrency?:number, force?:boolean}} opts
    */
-  async syncAll(seriesList, { onProgress = () => {}, concurrency = 3, force = false } = {}) {
+  async syncAll(seriesList, { onProgress = () => {}, concurrency = 4, force = false } = {}) {
     if (!this.tmdb?.enabled) throw new Error('还没有配置 TMDB API Key');
     let done = 0;
     let failed = 0;

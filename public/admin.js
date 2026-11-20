@@ -259,7 +259,12 @@ function renderTmdbIndex() {
     const pct = sync.total ? Math.round((sync.done / sync.total) * 100) : 0;
     bar.style.width = pct + '%';
     bar.style.background = '';
-    if (hint) hint.textContent = `同步中 ${sync.done}/${sync.total}（${pct}%）· ${sync.current || ''}${sync.failed ? ` · 失败 ${sync.failed}` : ''}`;
+    const elapsed = sync.startedAt ? (Date.now() - sync.startedAt) / 1000 : 0;
+    const per = sync.done > 0 ? elapsed / sync.done : 0;
+    const eta = per > 0 && sync.total > sync.done ? Math.round(((sync.total - sync.done) * per) / 10) * 10 : 0;
+    if (hint) {
+      hint.textContent = `同步中 ${sync.done}/${sync.total}（${pct}%）· ${sync.current || ''}${sync.failed ? ` · 失败 ${sync.failed}` : ''}${eta ? ` · 预计还需 ${eta >= 60 ? Math.round(eta / 60) + ' 分钟' : eta + ' 秒'}` : ''}`;
+    }
     if (btn) { btn.disabled = true; btn.textContent = '同步中…'; }
   } else {
     bar.style.width = idx.matched > 0 ? '100%' : '0';

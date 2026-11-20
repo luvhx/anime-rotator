@@ -77,6 +77,9 @@ export const DEFAULT_CONFIG = {
     apiKey: '',
     readToken: '',
     language: 'zh-CN',
+    // 国内访问 api.themoviedb.org 很慢时，可以换成自建反代/镜像
+    baseUrl: 'https://api.themoviedb.org/3',
+    concurrency: 4,
   },
   settings: {
     // 运行期设置文件（Web UI 保存到这里）；null = 默认 data/settings.json

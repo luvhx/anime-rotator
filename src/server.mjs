@@ -838,7 +838,7 @@ export function createApp(baseConfig) {
     state.tmdbIndex
       .syncAll(state.library.series, {
         force: Boolean(body.force),
-        concurrency: 3,
+        concurrency: cfg.tmdb?.concurrency || 4,
         onProgress: (done, all, name, failed) => {
           Object.assign(state.tmdbSync, { done, total: all, current: name, failed });
         },

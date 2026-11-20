@@ -55,7 +55,16 @@ export class TmdbClient {
    * @param {string} [opts.cacheFile]
    * @param {number} [opts.ttlMs]
    */
-  constructor({ apiKey = '', readToken = '', language = 'zh-CN', cacheFile = null, ttlMs = 7 * 86400_000 } = {}) {
+  constructor({
+    apiKey = '',
+    readToken = '',
+    language = 'zh-CN',
+    cacheFile = null,
+    ttlMs = 7 * 86400_000,
+    baseUrl = 'https://api.themoviedb.org/3',
+    concurrency = 4,
+    minIntervalMs = 120,
+  } = {}) {
     this.apiKey = String(apiKey || '').trim();
     this.readToken = String(readToken || '').trim();
     this.language = language || 'zh-CN';
@@ -64,9 +73,13 @@ export class TmdbClient {
     this.memory = new Map();
     this.dirty = false;
     this.lastError = null;
-    this.queue = Promise.resolve();
-    this.minIntervalMs = 260; // 约 4 req/s
+    this.baseUrl = String(baseUrl || 'https://api.themoviedb.org/3').replace(/\/+$/, '');
+    this.concurrency = Math.max(1, Number(concurrency) || 4);
+    this.minIntervalMs = Math.max(0, Number(minIntervalMs) || 0); // 相邻请求最小间隔
     this._lastAt = 0;
+    this._inflight = 0;
+    this._waiters = [];
+    this._genres = null;
     this._load();
   }
 
@@ -122,7 +135,7 @@ export class TmdbClient {
   /* ------------------------------ 请求 ------------------------------ */
 
   async _fetch(pathname, params = {}) {
-    const url = new URL(API_BASE + pathname);
+    const url = new URL(this.baseUrl + pathname);
     url.searchParams.set('language', params.language || this.language);
     for (const [k, v] of Object.entries(params)) {
       if (v == null || k === 'language') continue;
@@ -131,11 +144,6 @@ export class TmdbClient {
     const headers = { Accept: 'application/json' };
     if (this.readToken) headers.Authorization = `Bearer ${this.readToken}`;
     else url.searchParams.set('api_key', this.apiKey);
-
-    // 简单节流，避免触发 TMDB 限流
-    const wait = Math.max(0, this.minIntervalMs - (Date.now() - this._lastAt));
-    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-    this._lastAt = Date.now();
 
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), 15000);
@@ -154,14 +162,52 @@ export class TmdbClient {
     }
   }
 
-  /** 串行化外部调用，保证节流生效 */
-  _enqueue(fn) {
-    const run = this.queue.then(fn, fn);
-    this.queue = run.catch(() => {});
-    return run;
+  async _acquire() {
+    if (this._inflight < this.concurrency) {
+      this._inflight++;
+      return;
+    }
+    await new Promise((resolve) => this._waiters.push(resolve));
+    this._inflight++;
+  }
+
+  _release() {
+    this._inflight--;
+    const next = this._waiters.shift();
+    if (next) next();
+  }
+
+  /**
+   * 并发限流 + 最小间隔的请求调度。
+   * 之前是「全局串行 + 260ms 间隔」，158 部剧要 80 秒起步；现在 4 并发、120ms 间隔。
+   */
+  async _enqueue(fn) {
+    await this._acquire();
+    try {
+      const wait = Math.max(0, this.minIntervalMs - (Date.now() - this._lastAt));
+      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+      this._lastAt = Date.now();
+      return await fn();
+    } finally {
+      this._release();
+    }
   }
 
   /* ------------------------------ 接口 ------------------------------ */
+
+  /** 电视类型 id → 名称（缓存，整轮同步只查一次） */
+  async tvGenres() {
+    if (this._genres) return this._genres;
+    const key = 'genres:tv';
+    let list = this._cached(key);
+    if (!list) {
+      const data = await this._enqueue(() => this._fetch('/genre/tv/list'));
+      list = (data?.genres || []).map((g) => ({ id: g.id, name: g.name }));
+      this._store(key, list);
+    }
+    this._genres = new Map(list.map((g) => [g.id, g.name]));
+    return this._genres;
+  }
 
   async searchTv(query, { year } = {}) {
     const q = String(query || '').trim();
@@ -172,6 +218,7 @@ export class TmdbClient {
     const data = await this._enqueue(() =>
       this._fetch('/search/tv', { query: q, year, include_adult: 'false' }),
     );
+    const genreMap = await this.tvGenres().catch(() => new Map());
     const results = (data?.results || []).slice(0, 8).map((r) => ({
       id: r.id,
       name: r.name,
@@ -181,6 +228,7 @@ export class TmdbClient {
       poster: r.poster_path ? this.posterUrl(r.poster_path) : null,
       popularity: r.popularity || 0,
       vote: r.vote_average || 0,
+      genres: (r.genre_ids || []).map((id) => genreMap.get(id)).filter(Boolean),
       score: Math.max(similarity(query, r.name), similarity(query, r.original_name || '')),
     }));
     this._store(key, results);
