@@ -831,6 +831,8 @@ export function createApp(baseConfig) {
 
   async function apiAdminTmdbSync(req, res) {
     if (!state.tmdb.enabled) throw new HttpError(400, '还没有配置 TMDB API Key');
+    const stale = state.tmdbSync.running && state.tmdbSync.startedAt && Date.now() - state.tmdbSync.startedAt > 15 * 60_000;
+    if (stale) state.tmdbSync = { running: false, done: 0, total: 0, failed: 0, error: '上一次同步超时，已重置' };
     if (state.tmdbSync.running) throw new HttpError(409, 'TMDB 同步进行中');
     const body = await readJson(req).catch(() => ({}));
     const total = state.library.series.length;
@@ -838,7 +840,7 @@ export function createApp(baseConfig) {
     state.tmdbIndex
       .syncAll(state.library.series, {
         force: Boolean(body.force),
-        concurrency: cfg.tmdb?.concurrency || 4,
+        concurrency: state.config.tmdb?.concurrency || 4,
         onProgress: (done, all, name, failed) => {
           Object.assign(state.tmdbSync, { done, total: all, current: name, failed });
         },
@@ -846,7 +848,6 @@ export function createApp(baseConfig) {
       .then(() => {
         state.tmdbSync.running = false;
         state.tmdbSync.finishedAt = Date.now();
-        state.tmelines?.clear?.();
         state.timelines.clear();
       })
       .catch((err) => {
