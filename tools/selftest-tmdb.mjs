@@ -89,6 +89,12 @@ check(anime?.count === 3, 'facets 类型计数', `动画 ${anime?.count}`);
 check(facets.years.some((y) => y.year === '2021'), 'facets 年份列表');
 check(idx2.stats(4).matched === 3, 'stats 汇总');
 
+/* ---------- 残缺记录（有 id 但没类型）需要重拉 ---------- */
+idx2.set('s1', { tmdbId: 1001, name: '冰菓', genres: [] });
+check(idx2.isStale('s1'), '缺失类型的记录判为过期');
+idx2.set('s1', { tmdbId: 1001, name: '冰菓', genres: ['动画'] });
+check(!idx2.isStale('s1'), '完整记录不判过期');
+
 /* ---------- 过期 ---------- */
 const stale = new TmdbIndex({ file, tmdb: fakeTmdb, ttlMs: -1 });
 check(stale.isStale('s1'), 'TTL 过期判定');

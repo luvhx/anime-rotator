@@ -56,6 +56,8 @@ export class TmdbIndex {
   isStale(seriesId) {
     const e = this.map.get(seriesId);
     if (!e) return true;
+    // 只有 id 没有类型：多半是早期版本/封面接口写入的残缺记录，需要重拉
+    if (e.tmdbId && (!e.genres || e.genres.length === 0)) return true;
     return Date.now() - (e.at || 0) > this.ttlMs;
   }
 

@@ -714,16 +714,19 @@ export function createApp(baseConfig) {
       if (!series) return;
       const info = await resolveTmdb(series);
       if (info?.id) {
+        // 合并而不是覆盖：封面接口拿不到类型时不要冲掉同步得到的 genre
+        const prev = state.tmdbIndex.get(series.id) || {};
         state.tmdbIndex.set(series.id, {
+          ...prev,
           tmdbId: info.id,
-          name: info.name,
-          year: info.year,
-          vote: info.vote,
-          genres: info.genres || [],
-          status: info.status,
-          poster: info.poster,
-          overview: info.overview,
-          source: info.source,
+          name: info.name || prev.name,
+          year: info.year || prev.year,
+          vote: info.vote || prev.vote,
+          genres: info.genres?.length ? info.genres : prev.genres || [],
+          status: info.status || prev.status,
+          poster: info.poster || prev.poster,
+          overview: info.overview || prev.overview,
+          source: info.source || prev.source,
         });
         state.tmdbIndex.save();
       }
