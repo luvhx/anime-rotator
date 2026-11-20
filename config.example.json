@@ -14,7 +14,7 @@
   },
   "stream": {
     "mode": "redirect",
-    "urlPrefix": "http://192.168.1.10:19798/dav/115/Media",
+    "urlPrefix": "http://192.168.1.10:19798/dav/Media",
     "embedCredentials": false,
     "token": null,
     "passRange": true,

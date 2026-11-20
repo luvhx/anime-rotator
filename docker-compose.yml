@@ -18,7 +18,7 @@ services:
       TZ: "${TZ:-Asia/Shanghai}"
       # 以下都可在 /admin 界面里配置，通常不需要填。
       # 想用环境变量注入（例如 GitOps / 自动化部署）时取消注释：
-      # WEBDAV_BASE_URL: "http://192.168.1.10:19798/dav/115/Media"
+      # WEBDAV_BASE_URL: "http://192.168.1.10:19798/dav/Media"
       # WEBDAV_ROOT: "动画"
       # WEBDAV_USERNAME: "user@example.com"
       # WEBDAV_PASSWORD: "password"

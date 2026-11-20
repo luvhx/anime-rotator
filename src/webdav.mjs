@@ -9,7 +9,7 @@ import { joinUrl } from './util.mjs';
 export class WebDavClient {
   /**
    * @param {object} opts
-   * @param {string} opts.baseUrl  例：http://192.168.124.3:19798/dav/115/Media
+   * @param {string} opts.baseUrl  例：http://host:19798/dav/Media
    * @param {string} [opts.username]
    * @param {string} [opts.password]
    * @param {number} [opts.timeoutMs]

@@ -14,8 +14,8 @@ import { encodePath } from './util.mjs';
 /**
  * 拼接「前端读取前缀」与文件相对路径。
  * 前缀可以是：
- *   - 绝对 URL（http://host/dav/115/Media、https://cdn.example.com/anime）
- *   - 站内路径（/dav/115/Media）
+ *   - 绝对 URL（http://host/dav/Media、https://cdn.example.com/anime）
+ *   - 站内路径（/dav/Media）
  * 会自动处理前缀已经包含根目录名的情况（例如前缀以 /动画 结尾）。
  */
 export function buildFileUrl({ prefix, relPath, root = '', token = null, embedCredentials = false, dav = null }) {

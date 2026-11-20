@@ -60,7 +60,7 @@ npm start                            # http://127.0.0.1:8088 ，打开 /admin �
 npm run scan                         # 也可以在终端里建索引（首次约 25 分钟 / 4000 集）
 ```
 
-> 本机实测（115 WebDAV / 158 部动画）：3993 集、1415 小时（约 59 天）、2.6 TB；时长 100% 由容器头解析（0 集估算）。首次扫描 1680 s，重扫 145 s。
+> 本机实测（WebDAV 媒体库 / 158 部动画）：3993 集、1415 小时（约 59 天）、2.6 TB；时长 100% 由容器头解析（0 集估算）。首次扫描 1680 s，重扫 145 s。
 >
 > 默认 `stream.mode` 用 `proxy`（后端带凭据转发），保证浏览器开箱能播；WebDAV 免鉴权或前面挂了解析鉴权的反代时，改成 `redirect` 更省带宽（可在 /admin 里一键切换）。
 
@@ -207,7 +207,7 @@ iOS / iPadOS 上所有浏览器（Safari、Chrome、"Gear" 等）都是 WebKit �
 
 产物路径：`compat/<系列>/<原文件名>.mp4` —— **在扫描根目录之外**，不会被 scan 当成新剧集。
 
-> **关于直链延迟**：OpenList/115 对「刚上传」的文件可能暂时返回 5xx（直链还没索引）。所以上传成功后会先 `HEAD` 探测直链，通了才标记 `published` 切 302；不通就继续走本地服务，下次请求自动重试。
+> **关于直链延迟**：部分 WebDAV/网盘后端对「刚上传」的文件可能暂时返回 5xx（直链还没索引）。所以上传成功后会先 `HEAD` 探测直链，通了才标记 `published` 切 302；不通就继续走本地服务，下次请求自动重试。
 
 实测：20 MB 上传 0.74 秒（28.4 MB/s）、读回 39.6 MB/s。
 
@@ -230,7 +230,7 @@ docker compose up -d
 
 首屏会提示「未配置」，跟着引导走即可：
 
-1. 配置 → 填 `WebDAV 地址`（如 `http://192.168.1.10:19798/dav/115/Media`）、根目录（如 `动画`）、账号密码 → 保存；
+1. 配置 → 填 `WebDAV 地址`（如 `http://192.168.1.10:19798/dav/Media`）、根目录（如 `动画`）、账号密码 → 保存；
 2. 概览 → 「开始扫描」（4000 集约 25 分钟，可先取消勾选「解析时长」快速建索引）；
 3. 媒体库 → 勾选要播的节目（不勾 = 全部）；
 4. 编排 → 改频道规则或套模板；
@@ -292,7 +292,7 @@ anime.example.com {
 
 ```nginx
 location /media/ {
-    proxy_pass http://192.168.1.10:19798/dav/115/Media/;
+    proxy_pass http://192.168.1.10:19798/dav/Media/;
     proxy_set_header Authorization "Basic <base64(账号:密码)>";
     proxy_set_header Range $http_range;
     proxy_buffering off;
@@ -370,7 +370,7 @@ if (Math.abs(video.currentTime - target) > 4) video.currentTime = target;  // �
   "server": { "host": "0.0.0.0", "port": 8088, "publicDir": "public" },
   "timezone": "Asia/Shanghai",          // 编排与展示使用的时区
   "webdav": {
-    "baseUrl": "http://192.168.1.10:19798/dav/115/Media",
+    "baseUrl": "http://192.168.1.10:19798/dav/Media",
     "root": "动画",                      // baseUrl 下的节目根目录
     "username": "...", "password": "...",
     "timeoutMs": 20000
@@ -378,7 +378,7 @@ if (Math.abs(video.currentTime - target) > 4) video.currentTime = target;  // �
   "paths": { "library": "data/library.json", "durations": "data/durations.json" },
   "stream": {
     "mode": "redirect",                  // redirect(302 直链) | proxy(后端转发)
-    "urlPrefix": "http://192.168.1.10:19798/dav/115/Media",  // 前端读取视频的 URL 前缀
+    "urlPrefix": "http://192.168.1.10:19798/dav/Media",  // 前端读取视频的 URL 前缀
     "embedCredentials": false,           // 302 时把账号密码嵌进 URL
     "token": null,                       // 追加鉴权串，如 "xxx" 或 "?sign=..."
     "passRange": true,                   // proxy 模式透传 Range（拖动必需）
@@ -515,7 +515,7 @@ if (Math.abs(video.currentTime - target) > 4) video.currentTime = target;  // �
   "now": {
     "fileId": "aep2000000", "series": "冰菓", "season": 1, "episode": 2, "title": "第2话",
     "streamUrl": "/stream/aep2000000",
-    "directUrl": "http://192.168.1.10:19798/dav/115/Media/%E5%8A%A8%E7%94%BB/...",
+    "directUrl": "http://192.168.1.10:19798/dav/Media/%E5%8A%A8%E7%94%BB/...",
     "startsAt": 1794748600000, "endsAt": 1794750000000,
     "durationMs": 1400000, "offsetMs": 1213351, "remainingMs": 186649,
     "progress": 0.867, "truncated": false, "segmentLabel": "轮播档"
@@ -539,9 +539,9 @@ if (Math.abs(video.currentTime - target) > 4) video.currentTime = target;  // �
 
 - 后端不转发字节，零带宽开销，天然支持 Range 拖动。
 - `urlPrefix` 就是「前端读取视频文件时的 URL 前缀」，可以指向：
-  - WebDAV 本身：`http://192.168.1.10:19798/dav/115/Media`
+  - WebDAV 本身：`http://192.168.1.10:19798/dav/Media`
   - 带鉴权的反向代理 / CDN：`https://media.example.com/anime`
-  - 站内路径：`/dav/115/Media`（同源，免 CORS）
+  - 站内路径：`/dav/Media`（同源，免 CORS）
 - 前缀已经包含根目录（如 `.../Media/动画`）时不会重复拼接。
 - 支持逐请求覆盖：`/stream/<fileId>?prefix=https://cdn.example.com/v` 或 `/api/now?...&prefix=...&mode=direct`。
 
@@ -564,7 +564,7 @@ if (Math.abs(video.currentTime - target) > 4) video.currentTime = target;  // �
 
 ```nginx
 location /media/ {
-    proxy_pass http://192.168.1.10:19798/dav/115/Media/;
+    proxy_pass http://192.168.1.10:19798/dav/Media/;
     proxy_set_header Authorization "Basic <base64(账号:密码)>";
     proxy_set_header Range $http_range;
     proxy_set_header If-Range $http_if_range;

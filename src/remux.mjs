@@ -275,7 +275,7 @@ export class RemuxService {
   }
 
   /**
-   * 上传成功 ≠ 直链可用：OpenList/115 对刚上传的文件可能暂时返回 5xx。
+   * 上传成功 ≠ 直链可用：部分 WebDAV/网盘后端对刚上传的文件可能暂时返回 5xx。
    * 只有 HEAD 探测通过才标记 published，否则继续走本地服务。
    */
   async #verifyAndPublish(ep, remote) {
