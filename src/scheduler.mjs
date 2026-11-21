@@ -323,11 +323,77 @@ function makeGrid(rule, ctx) {
     t = offsetSec * 1000;
   }
 
+  // 循环周期（天）：片池大于「每天部数 × 周期天数」时启用
+  //   固定名单 = 每天部数 × 周期天数 个位置；多出来的影片排队
+  //   某个位置上的影片播完最后一集后，队列里的下一部补上，从第 1 集开始
+  const cycleDays = Math.max(0, Math.min(31, Number(rule.cycleDays) || 0));
+  const slots = perDay * cycleDays;
+  const useRoster = cycleDays > 0 && slots > 0 && pool.length > slots;
+
+  const episodesOfCache = new Map();
+  const epsOf = (id) => {
+    if (!episodesOfCache.has(id)) episodesOfCache.set(id, ctx.library.episodesOf(id) || []);
+    return episodesOfCache.get(id);
+  };
+  const runCycles = (series) => Math.max(1, Math.ceil(epsOf(series.id).length / perSeries));
+
+  let roster = null;
+  if (useRoster) {
+    const cache = ctx.gridCache.get(ctx.cacheKey) || { rows: [], queue: pool.slice(slots), qpos: 0 };
+    ctx.gridCache.set(ctx.cacheKey, cache);
+
+    const dequeue = (inRoster) => {
+      let guard = 0;
+      while (guard++ < pool.length * 3) {
+        if (cache.qpos >= cache.queue.length) {
+          cache.queue = pool.slice(); // 队列用完，从片池重新排一轮
+          cache.qpos = 0;
+        }
+        const s = cache.queue[cache.qpos++];
+        if (!inRoster.has(s.id)) return s;
+      }
+      return null;
+    };
+
+    roster = (c) => {
+      while (cache.rows.length <= c) {
+        const cur = cache.rows.length;
+        if (cur === 0) {
+          cache.rows.push(pool.slice(0, slots).map((series) => ({ series, start: 0, airing: 0 })));
+          continue;
+        }
+        const prev = cache.rows[cur - 1];
+        const inRoster = new Set(prev.map((x) => x.series.id));
+        const row = prev.map((seat) => {
+          if (cur - seat.start < runCycles(seat.series)) return { ...seat, airing: cur - seat.start };
+          const next = dequeue(inRoster);
+          if (!next) return { ...seat, airing: cur - seat.start };
+          inRoster.delete(seat.series.id);
+          inRoster.add(next.id);
+          return { series: next, start: cur, airing: 0 };
+        });
+        cache.rows.push(row);
+      }
+      return cache.rows[c];
+    };
+  }
+
+  const cycleDay = useRoster ? ((day % cycleDays) + cycleDays) % cycleDays : 0;
+  const cycleIndex = useRoster ? Math.floor(day / cycleDays) : 0;
+
   for (let j = 0; j < perDay; j++) {
-    const slot = ((day * perDay + j) % pool.length + pool.length) % pool.length;
-    const series = pool[slot];
-    const occurrence = Math.floor((day * perDay + j) / pool.length);
-    const all = ctx.library.episodesOf(series.id);
+    let series;
+    let occurrence;
+    if (useRoster) {
+      const seat = roster(Math.max(0, cycleIndex))[cycleDay * perDay + j];
+      series = seat.series;
+      occurrence = seat.airing;
+    } else {
+      const slotIdx = ((day * perDay + j) % pool.length + pool.length) % pool.length;
+      series = pool[slotIdx];
+      occurrence = Math.floor((day * perDay + j) / pool.length);
+    }
+    const all = epsOf(series.id);
     if (!all || all.length === 0) continue;
 
     // 锚点之前的日期 occurrence 会是负数：按周期折算回来，避免取到 undefined
@@ -462,6 +528,8 @@ export class ChannelTimeline {
         dayIndex: localDayIndex(startMs, this.tz),
         dayStartMs: startMs,
         dayStartSec: this.channel.dayStartSec || 0,
+        cacheKey: segIndex,
+        gridCache: (this._gridCache ||= new Map()),
       };
       const engine = makeRule(seg.rule, ctx);
       return {

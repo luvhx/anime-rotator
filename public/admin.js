@@ -872,7 +872,11 @@ function renderSegment(ch, seg, index) {
     'select',
     {
       onchange: (e) => {
-        seg.rule = { type: e.target.value, ...(e.target.value === 'daypart' ? { slots: defaultSlots() } : {}) };
+        seg.rule = {
+          type: e.target.value,
+          ...(e.target.value === 'daypart' ? { slots: defaultSlots() } : {}),
+          ...(e.target.value === 'grid' ? { cycleDays: 7 } : {}),
+        };
         markDirty('channels');
         renderChannelEditor();
       },
@@ -951,6 +955,7 @@ function renderSegment(ch, seg, index) {
           [15, 30, 60].map((m) => el('option', { value: String(m), selected: (rule.slotMinutes || 30) === m }, `${m} 分钟`)))),
       el('label', {}, '每天几部', num('seriesPerDay', 3, 1, 24)),
       el('label', {}, '每部几集', num('episodesPerSeries', 2, 1, 48)),
+      el('label', {}, '循环周期（天，0=走完整池才回头）', num('cycleDays', 7, 0, 31)),
       el('label', {}, '片池（每行一部，留空=频道选片）',
         el('textarea', {
           rows: 4,
@@ -1072,7 +1077,15 @@ function describeSegment(seg) {
       const perDay = rule.seriesPerDay || 3;
       const perSeries = rule.episodesPerSeries || 2;
       const pool = (rule.series || []).length;
-      return `每天 ${start} 开始，播 ${perDay} 部 × ${perSeries} 集${pool ? `（片池 ${pool} 部，逐日轮换）` : '（片池=频道选片）'}；按 ${slot} 分钟对齐，不足一格留白；集数用完${rule.loopEpisodes === 'stop' ? '跳过' : '循环'}。`;
+      const cycleDays = Number(rule.cycleDays) || 0;
+      const roster = cycleDays > 0 ? `${cycleDays} 天一轮，固定 ${perDay * cycleDays} 个位置` : '不设周期，走完整池才回头';
+      const queue =
+        cycleDays > 0 && pool > perDay * cycleDays
+          ? `；片池 ${pool} 部，超出的 ${pool - perDay * cycleDays} 部排队，播完一部补一部`
+          : pool
+            ? `（片池 ${pool} 部）`
+            : '（片池=频道选片）';
+      return `每天 ${start} 开始，播 ${perDay} 部 × ${perSeries} 集；${roster}${queue}；按 ${slot} 分钟对齐，不足一格留白；集数用完${rule.loopEpisodes === 'stop' ? '跳过' : '循环'}。`;
     }
     default:
       return '';
@@ -1393,7 +1406,7 @@ const PRESETS = [
   {
     name: '电视台 · 黄金档',
     desc: '每天 20:00 起播 3 部 × 2 集，按半点对齐、空档留白',
-    program: [{ label: '黄金档', fill: true, rule: { type: 'grid', start: '20:00', slotMinutes: 30, seriesPerDay: 3, episodesPerSeries: 2 } }],
+    program: [{ label: '黄金档', fill: true, rule: { type: 'grid', start: '20:00', slotMinutes: 30, seriesPerDay: 3, episodesPerSeries: 2, cycleDays: 7 } }],
     mode: 'daily',
   },
   {

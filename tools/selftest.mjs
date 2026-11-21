@@ -341,6 +341,33 @@ for (const dayStart of ['00:00', '06:00', '04:30']) {
     library: miniLib,
     tz: TZ,
   });
+  // 循环周期：名单 + 排队补位
+  const rosterLib = new Library({
+    version: 1,
+    series: [
+      { id: '/m/A', dir: 'm/A', name: 'A', displayName: 'A', tmdbId: null, episodes: [epOf('A', 1), epOf('A', 2)] },
+      { id: '/m/B', dir: 'm/B', name: 'B', displayName: 'B', tmdbId: null, episodes: [1, 2, 3, 4, 5, 6, 7, 8].map((n) => epOf('B', n)) },
+      { id: '/m/C', dir: 'm/C', name: 'C', displayName: 'C', tmdbId: null, episodes: [epOf('C', 1), epOf('C', 2)] },
+      { id: '/m/D', dir: 'm/D', name: 'D', displayName: 'D', tmdbId: null, episodes: [epOf('D', 1), epOf('D', 2)] },
+      { id: '/m/E', dir: 'm/E', name: 'E', displayName: 'E', tmdbId: null, episodes: [epOf('E', 1), epOf('E', 2)] },
+      { id: '/m/F', dir: 'm/F', name: 'F', displayName: 'F', tmdbId: null, episodes: [epOf('F', 1), epOf('F', 2)] },
+    ],
+  });
+  const rosterTl = new ChannelTimeline({
+    channel: { id: 'roster', name: 'roster', mode: 'daily', anchor: '2026-11-23T00:00:00+08:00',
+      program: [{ fill: true, rule: { type: 'grid', start: '20:00', slotMinutes: 30, seriesPerDay: 2, episodesPerSeries: 2, cycleDays: 2, series: ['A', 'B', 'C', 'D', 'E', 'F'] } }] },
+    library: rosterLib,
+    tz: TZ,
+  });
+  const rday = (n) => rosterTl.dayPlan(rosterTl.dayIndexOf(at('2026-11-23T12:00:00+08:00') + n * 86400000));
+  const pick = (n) => rday(n).entries.map((e) => e.episode.seriesName + 'E' + e.episode.episode);
+
+  check(pick(0).join(',') === 'AE1,AE2,BE1,BE2', '周期：第 1 天用名单前 2 部', pick(0).join(','));
+  check(pick(1).join(',') === 'CE1,CE2,DE1,DE2', '周期：第 2 天用名单后 2 部', pick(1).join(','));
+  check(pick(2).join(',') === 'EE1,EE2,BE3,BE4', '周期：播完的 A 被排队的 E 顶替，B 继续第 3、4 集', pick(2).join(','));
+  check(pick(3).join(',') === 'FE1,FE2,AE1,AE2', '周期：C 被 F 顶替，D 被重新排队', pick(3).join(','));
+  check(pick(4).includes('BE5') && pick(4).includes('BE6'), '周期：长片按周继续，不会重置', pick(4).join(','));
+
   const miniPlan = miniTl.dayPlan(miniTl.dayIndexOf(at('2026-11-23T12:00:00+08:00')));
   const miniIds = miniPlan.entries.map((e) => e.episode.fileId);
   check(miniPlan.entries.length === 3, '网格：集数不足时只播现有的', miniIds.join(','));

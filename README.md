@@ -427,6 +427,7 @@ if (Math.abs(video.currentTime - target) > 4) video.currentTime = target;  // �
         "slotMinutes": 30,         // 对齐网格：15 / 30 / 60
         "seriesPerDay": 3,         // 每天几部
         "episodesPerSeries": 2,    // 每部几集
+        "cycleDays": 7,            // 循环周期：固定 21 个位置，多余的影片排队补位
         "series": ["A", "B", "C", "D", "E", "F"]   // 片池：按顺序逐日轮换
       }
     }
@@ -434,7 +435,12 @@ if (Math.abs(video.currentTime - target) > 4) video.currentTime = target;  // �
 }
 ```
 
-效果：
+效果（`cycleDays: 7`）：
+- 一周固定 `3 × 7 = 21` 个位置，第 1 周用片池前 21 部，每部播 2 集
+- 第 2 周同一批位置继续播第 3、4 集；**某部最后一集播完后，队列里的下一部补上这个位置，从第 1 集开始**
+- 片池 158 部时，有 137 部在排队，会随着各位置播完逐步补进来
+- `cycleDays: 0` 则不做名单，按片池顺序每天往后推 3 部
+
 - 周一 `20:00 A1` → `20:30 A2` → `21:00 B1` → `21:30 B2` → `22:00 C1` → `22:30 C2`
 - 周二 `D1/D2/E1/E2/F1/F2`，周三又回到 `A3/A4/B3/B4/C3/C4`（每部接着上次的集数）
 - 每集占 `ceil(时长 / slotMinutes)` 格：24 分钟的集播到 `20:24`，下一集从 `20:30` 开始，中间留白
