@@ -661,14 +661,14 @@ export function createApp(baseConfig) {
     if (!def) throw new HttpError(404, `频道不存在：${channelId}`);
     if (!state.library.episodes.length) throw new HttpError(503, '还没有扫描过媒体库');
 
-    const hours = clamp(Number(draft.hours) || 12, 1, 72);
+    const hours = clamp(Number(draft.hours) || 12, 1, 336); // 最长 14 天
     const at = draft.at ? toMs(draft.at) : Date.now();
     let tl;
     try {
       tl = new ChannelTimeline({ channel: def, library: state.library, tz: cfg.timezone, tmdbIndex: state.tmdbIndex });
       const stats = tl.stats();
       const resolved = tl.resolve(at);
-      const items = tl.schedule(at, at + hours * 3600_000, 300);
+      const items = tl.schedule(at, at + hours * 3600_000, 3000);
       return {
         ok: true,
         channel: { id: def.id, name: def.name, mode: def.mode },

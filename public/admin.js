@@ -30,16 +30,23 @@ const S = {
 };
 
 const RULE_META = {
-  sequential: { label: '顺序连播', desc: '按系列顺序，一部播完接下一部' },
-  binge: { label: '整部连播', desc: '同 sequential，语义上一口气播完一部' },
-  interleave: { label: '跨系列轮播', desc: 'A 第1集 → B 第1集 → A 第2集…' },
-  shuffle: { label: '随机打散', desc: '全库打散，一轮播完再洗' },
-  weighted: { label: '加权随机', desc: '按频道权重随机抽取' },
-  daily: { label: '每日换番', desc: '每天换一部，当天集序随机' },
-  daypart: { label: '分时段', desc: '按墙上时间切换子规则（支持跨零点）' },
+  sequential: { label: '顺序轮播', desc: '一部播完接下一部，整库播完从头循环' },
+  binge: { label: '顺序轮播', desc: '同顺序轮播' },
+  interleave: { label: '跨剧轮播', desc: 'A 第 1 集 → B 第 1 集 → A 第 2 集…' },
+  shuffle: { label: '随机轮播', desc: '全库打散，一轮播完重新洗牌' },
+  daily: { label: '每日一部', desc: '每天换一部，当天集序随机' },
+  grid: { label: '时间网格', desc: '按整点 / 半点对齐，空档留白（电视台）' },
+  daypart: { label: '分时段', desc: '按时段切换规则，适合黄金档 / 深夜档' },
+  weighted: { label: '加权随机', desc: '按频道权重随机，同一部可重复' },
   manual: { label: '手动节目单', desc: '显式列出要播的集' },
-  grid: { label: '时间网格', desc: '按整点/半点对齐，每集固定占格，空档留白（日编排）' },
 };
+
+/** 界面上的规则分组：轮播直播间 / 电视台 / 高级 */
+const RULE_GROUPS = [
+  { label: '轮播直播间', types: ['shuffle', 'sequential', 'interleave', 'daily'] },
+  { label: '电视台', types: ['grid', 'daypart'] },
+  { label: '高级', types: ['weighted', 'manual'] },
+];
 
 const TARGETS = [
   { value: 'count', label: '按集数', unit: '集' },
@@ -775,8 +782,8 @@ function renderChannelEditor() {
               markDirty('channels');
             },
           },
-          el('option', { value: 'loop', selected: ch.mode !== 'daily' }, '循环：把编排铺成一条循环，播完从头再来'),
-          el('option', { value: 'daily', selected: ch.mode === 'daily' }, '按日：每天从日切点重排、填满 24 小时'),
+          el('option', { value: 'loop', selected: ch.mode !== 'daily' }, '轮播直播间：编排铺成一条循环，24 小时不停'),
+          el('option', { value: 'daily', selected: ch.mode === 'daily' }, '电视台：每天排一遍，可设日切点'),
         ),
       ),
       el('label', {}, '描述', el('input', { value: ch.description || '', oninput: (e) => { ch.description = e.target.value; markDirty('channels'); } })),
@@ -870,7 +877,13 @@ function renderSegment(ch, seg, index) {
         renderChannelEditor();
       },
     },
-    ...Object.entries(RULE_META).map(([k, v]) => el('option', { value: k, selected: k === type }, `${v.label}（${k}）`)),
+    ...RULE_GROUPS.map((g) =>
+      el(
+        'optgroup',
+        { label: g.label },
+        ...g.types.map((k) => el('option', { value: k, selected: k === type }, RULE_META[k].label)),
+      ),
+    ),
   );
 
   const targetSelect = el(
@@ -1212,6 +1225,7 @@ async function runPreview() {
       body: {
         channel: $('#previewChannel').value,
         hours: Number($('#previewRange').value),
+        at: $('#previewStart')?.value ? new Date($('#previewStart').value).toISOString() : undefined,
         settings: { channels: S.draft.channels, selection: S.draft.selection, timezone: S.draft.timezone },
       },
     });
@@ -1242,7 +1256,13 @@ function renderPreview(data) {
   );
   const tbody = el('tbody', {});
   const nowMs = Date.now();
+  let lastDay = '';
   for (const item of data.items) {
+    const dayKey = fmtDay(item.startsAt, tz);
+    if (dayKey !== lastDay) {
+      lastDay = dayKey;
+      tbody.append(el('tr', { class: 'day-sep' }, el('td', { colspan: '4' }, dayKey)));
+    }
     if (item.kind === 'gap') {
       tbody.append(
         el('tr', { class: 'gap-row' },
@@ -1359,29 +1379,32 @@ async function saveAll() {
 
 const PRESETS = [
   {
-    name: '整库连播',
-    desc: '一部播完接下一部，最省心的默认编排',
-    program: [{ label: '系列连播', rule: { type: 'sequential', order: 'name' } }],
+    name: '轮播直播间',
+    desc: '整库顺序循环，24 小时不停，开箱即用',
+    program: [{ label: '轮播', rule: { type: 'sequential', order: 'name' } }],
     mode: 'loop',
   },
   {
-    name: '随机 + 轮播',
-    desc: '每轮 2 小时随机打散，再插 6 集跨系列轮播',
-    program: [
-      { label: '随机档', rule: { type: 'shuffle' }, hours: 2 },
-      { label: '轮播档', rule: { type: 'interleave' }, count: 6 },
-    ],
+    name: '随机轮播',
+    desc: '全库打散随机播，一轮播完重新洗牌',
+    program: [{ label: '随机', rule: { type: 'shuffle' } }],
     mode: 'loop',
   },
   {
-    name: '电视台日编排',
-    desc: '深夜随机 / 早间轮播 / 午后加权 / 黄金档连播',
+    name: '电视台 · 黄金档',
+    desc: '每天 20:00 起播 3 部 × 2 集，按半点对齐、空档留白',
+    program: [{ label: '黄金档', fill: true, rule: { type: 'grid', start: '20:00', slotMinutes: 30, seriesPerDay: 3, episodesPerSeries: 2 } }],
+    mode: 'daily',
+  },
+  {
+    name: '电视台 · 全天',
+    desc: '深夜 / 白天 / 黄金档分段，各段不同规则',
     program: [{ label: '全天', fill: true, rule: { type: 'daypart', slots: defaultSlots() } }],
     mode: 'daily',
   },
   {
     name: '每日一部',
-    desc: '每天换一部番，当天集序随机，适合追番节奏',
+    desc: '每天换一部，当天集序随机',
     program: [{ label: '每日番', fill: true, rule: { type: 'daily' } }],
     mode: 'daily',
   },

@@ -253,8 +253,12 @@
             <option value="6">未来 6 小时</option>
             <option value="12" selected>未来 12 小时</option>
             <option value="24">未来 24 小时</option>
-            <option value="48">未来 48 小时</option>
+            <option value="48">未来 2 天</option>
+            <option value="72">未来 3 天</option>
+            <option value="168">未来 7 天</option>
+            <option value="336">未来 14 天</option>
           </select>
+          <input id="previewStart" type="datetime-local" title="从这个时间开始预览（留空 = 现在）" />
           <button class="btn" id="btnPreview">刷新</button>
           <span class="grow"></span>
           <span class="hint">预览使用「当前未保存的编排」，可以先试再存</span>

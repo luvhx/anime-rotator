@@ -228,8 +228,28 @@ a {
 
 .form-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 12px 16px;
+}
+
+/* 所有栅格表单：允许收缩 + 控件撑满格子（否则 datetime-local / time 会溢出压住右侧控件） */
+.form-grid > label,
+.seg-grid > label,
+.seg-row > label {
+  min-width: 0;
+}
+.form-grid input:not([type='checkbox']):not([type='radio']),
+.form-grid select,
+.form-grid textarea,
+.seg-grid input:not([type='checkbox']):not([type='radio']),
+.seg-grid select,
+.seg-grid textarea,
+.seg-row input:not([type='checkbox']):not([type='radio']),
+.seg-row select {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 label {
@@ -931,4 +951,18 @@ textarea {
 .seg-summary::before {
   content: '摘要 · ';
   opacity: 0.8;
+}
+
+/* 预览：按天分隔 */
+.epg tr.day-sep td {
+  background: rgba(124, 92, 255, 0.10);
+  color: #cfc7ff;
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  padding: 6px 10px;
+}
+.toolbar input[type='datetime-local'] {
+  width: auto;
+  min-width: 200px;
 }
