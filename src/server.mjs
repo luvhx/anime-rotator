@@ -216,6 +216,19 @@ export function createApp(baseConfig) {
   }
 
   function programView(item, opts = {}) {
+    if (item.kind === 'gap' || !item.episode) {
+      return {
+        kind: 'gap',
+        startsAt: item.startsAt,
+        endsAt: item.endsAt,
+        durationMs: item.durationMs,
+        durationText: fmtDuration(item.durationMs),
+        startText: clockText(item.startsAt),
+        endText: clockText(item.endsAt),
+        segmentLabel: item.segmentLabel || '留空',
+        episode: null,
+      };
+    }
     const ep = item.episode;
     const view = episodeView(ep);
     return {
@@ -275,6 +288,25 @@ export function createApp(baseConfig) {
     const resolved = tl.resolve(now);
     const opts = { preferDirect: url.searchParams.get('mode') === 'direct', prefix: url.searchParams.get('prefix') || null };
 
+    const upcoming = tl
+      .schedule(now, now + 48 * 3600 * 1000, 60)
+      .filter((i) => i.startsAt > now && i.episode)
+      .map((i) => programView(i, opts));
+
+    const channel = { id: tl.channel.id, name: tl.channel.name, description: tl.channel.description, mode: tl.channel.mode };
+    if (resolved.off) {
+      return json(res, {
+        serverTime: now,
+        timezone: cfg.timezone,
+        channel,
+        off: true,
+        until: resolved.nextAt,
+        now: null,
+        next: upcoming.slice(0, 12),
+        stream: { mode: cfg.stream.mode, urlPrefix: cfg.stream.urlPrefix },
+      });
+    }
+
     const current = programView(
       {
         episode: resolved.episode,
@@ -286,14 +318,13 @@ export function createApp(baseConfig) {
       },
       opts,
     );
-    const upcoming = tl.schedule(now, now + 36 * 3600 * 1000, 40).filter((i) => i.startsAt > now);
 
     return json(res, {
       serverTime: now,
       timezone: cfg.timezone,
-      channel: { id: tl.channel.id, name: tl.channel.name, description: tl.channel.description, mode: tl.channel.mode },
+      channel,
       now: { ...current, offsetMs: resolved.offsetMs, remainingMs: resolved.remainingMs, progress: resolved.progress },
-      next: upcoming.slice(0, 12).map((i) => programView(i, opts)),
+      next: upcoming.slice(0, 12),
       stream: { mode: cfg.stream.mode, urlPrefix: cfg.stream.urlPrefix },
     });
   }
@@ -645,27 +676,43 @@ export function createApp(baseConfig) {
         at,
         hours,
         stats,
-        now: {
-          startsAt: resolved.startsAt,
-          endsAt: resolved.endsAt,
-          durationMs: resolved.durationMs,
-          offsetMs: resolved.offsetMs,
-          progress: resolved.progress,
-          segmentLabel: resolved.segmentLabel,
-          episode: episodeView(resolved.episode),
-          startText: clockText(resolved.startsAt),
-          endText: clockText(resolved.endsAt),
-        },
-        items: items.map((i) => ({
-          ...episodeView(i.episode),
-          startsAt: i.startsAt,
-          endsAt: i.endsAt,
-          durationMs: i.durationMs,
-          truncated: Boolean(i.truncated),
-          segmentLabel: i.segmentLabel || null,
-          startText: clockText(i.startsAt),
-          endText: clockText(i.endsAt),
-        })),
+        now: resolved.off
+          ? { off: true, nextAt: resolved.nextAt, startText: resolved.nextAt ? clockText(resolved.nextAt) : null }
+          : {
+              startsAt: resolved.startsAt,
+              endsAt: resolved.endsAt,
+              durationMs: resolved.durationMs,
+              offsetMs: resolved.offsetMs,
+              progress: resolved.progress,
+              segmentLabel: resolved.segmentLabel,
+              episode: episodeView(resolved.episode),
+              startText: clockText(resolved.startsAt),
+              endText: clockText(resolved.endsAt),
+            },
+        items: items.map((i) =>
+          i.kind === 'gap' || !i.episode
+            ? {
+                kind: 'gap',
+                startsAt: i.startsAt,
+                endsAt: i.endsAt,
+                durationMs: i.durationMs,
+                durationText: fmtDuration(i.durationMs),
+                segmentLabel: i.segmentLabel || '留空',
+                startText: clockText(i.startsAt),
+                endText: clockText(i.endsAt),
+                episode: null,
+              }
+            : {
+                ...episodeView(i.episode),
+                startsAt: i.startsAt,
+                endsAt: i.endsAt,
+                durationMs: i.durationMs,
+                truncated: Boolean(i.truncated),
+                segmentLabel: i.segmentLabel || null,
+                startText: clockText(i.startsAt),
+                endText: clockText(i.endsAt),
+              },
+        ),
       };
     } catch (err) {
       throw new HttpError(400, `预览失败：${err.message}`);

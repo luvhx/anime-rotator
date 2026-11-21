@@ -38,6 +38,7 @@ const RULE_META = {
   daily: { label: '每日换番', desc: '每天换一部，当天集序随机' },
   daypart: { label: '分时段', desc: '按墙上时间切换子规则（支持跨零点）' },
   manual: { label: '手动节目单', desc: '显式列出要播的集' },
+  grid: { label: '时间网格', desc: '按整点/半点对齐，每集固定占格，空档留白（日编排）' },
 };
 
 const TARGETS = [
@@ -914,6 +915,44 @@ function renderSegment(ch, seg, index) {
   if (type === 'daypart') {
     extras.push(renderSlots(ch, seg));
   }
+  if (type === 'grid') {
+    const rule = seg.rule;
+    const num = (key, fallback, min, max) => el('input', {
+      type: 'number', min: String(min), max: String(max), value: rule[key] ?? fallback,
+      oninput: (e) => {
+        rule[key] = Number(e.target.value) || fallback;
+        markDirty('channels');
+      },
+    });
+    extras.push(
+      el('label', {}, '每天开始时间',
+        el('input', {
+          type: 'time', value: rule.start || '20:00',
+          onchange: (e) => { rule.start = e.target.value || '20:00'; markDirty('channels'); },
+        })),
+      el('label', {}, '对齐网格（分钟）',
+        el('select', { onchange: (e) => { rule.slotMinutes = Number(e.target.value); markDirty('channels'); } },
+          [15, 30, 60].map((m) => el('option', { value: String(m), selected: (rule.slotMinutes || 30) === m }, `${m} 分钟`)))),
+      el('label', {}, '每天几部', num('seriesPerDay', 3, 1, 24)),
+      el('label', {}, '每部几集', num('episodesPerSeries', 2, 1, 48)),
+      el('label', {}, '片池（每行一部，留空=频道选片）',
+        el('textarea', {
+          rows: 4,
+          value: (rule.series || []).join('\n'),
+          placeholder: '86-不存在的战区\n白箱\n巴克·亚罗',
+          oninput: (e) => {
+            const list = e.target.value.split('\n').map((x) => x.trim()).filter(Boolean);
+            if (list.length) rule.series = list;
+            else delete rule.series;
+            markDirty('channels');
+          },
+        })),
+      el('label', {}, '集数用完后',
+        el('select', { onchange: (e) => { rule.loopEpisodes = e.target.value; markDirty('channels'); } },
+          el('option', { value: 'wrap', selected: (rule.loopEpisodes || 'wrap') === 'wrap' }, '从头循环'),
+          el('option', { value: 'stop', selected: rule.loopEpisodes === 'stop' }, '不再播这一部'))),
+    );
+  }
   if (type === 'manual') {
     extras.push(
       el(
@@ -1138,6 +1177,17 @@ function renderPreview(data) {
   const tbody = el('tbody', {});
   const nowMs = Date.now();
   for (const item of data.items) {
+    if (item.kind === 'gap') {
+      tbody.append(
+        el('tr', { class: 'gap-row' },
+          el('td', { class: 'time' }, `${fmtDay(item.startsAt, tz)} ${item.startText}`),
+          el('td', {}, el('span', { class: 'gap-tag' }, '留空')),
+          el('td', {}, ''),
+          el('td', { class: 'time' }, `${Math.round(item.durationMs / 60000)} 分`),
+        ),
+      );
+      continue;
+    }
     const live = nowMs >= item.startsAt && nowMs < item.endsAt;
     tbody.append(
       el(

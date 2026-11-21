@@ -403,6 +403,43 @@ if (Math.abs(video.currentTime - target) > 4) video.currentTime = target;  // �
 | `daily` | 每天换一部番，当天集序随机 | `series` | ❌ 无限 |
 | `daypart` | 按墙上时间分时段，各时段用不同子规则 | `slots: [{from,to,rule,label}]` | 由子规则决定 |
 | `manual` | 显式节目单 | `items: [{series,season,episode}]` 或 `{fileId}` | ✅ |
+| `grid` | **时间网格**：按整点/半点对齐，每集占整数格，空档留白 | `start`、`slotMinutes`、`seriesPerDay`、`episodesPerSeries`、`series` | ✅ 每天一份 |
+
+### 时间网格（`grid`）—— 电视台式的「半点对齐 + 留白」
+
+「周一起 20:00 播 3 部、每部 2 集，周二换 3 部；每集从整点或半点开始，不够就多占半个小时」：
+
+```jsonc
+{
+  "id": "golden",
+  "name": "黄金档",
+  "mode": "daily",
+  "anchor": "2026-11-23T00:00:00+08:00",   // 任意一个周一，决定轮换的起点
+  "program": [
+    {
+      "fill": true,
+      "label": "黄金档",
+      "rule": {
+        "type": "grid",
+        "start": "20:00",          // 每天几点开播（按墙上时钟）
+        "slotMinutes": 30,         // 对齐网格：15 / 30 / 60
+        "seriesPerDay": 3,         // 每天几部
+        "episodesPerSeries": 2,    // 每部几集
+        "series": ["A", "B", "C", "D", "E", "F"]   // 片池：按顺序逐日轮换
+      }
+    }
+  ]
+}
+```
+
+效果：
+- 周一 `20:00 A1` → `20:30 A2` → `21:00 B1` → `21:30 B2` → `22:00 C1` → `22:30 C2`
+- 周二 `D1/D2/E1/E2/F1/F2`，周三又回到 `A3/A4/B3/B4/C3/C4`（每部接着上次的集数）
+- 每集占 `ceil(时长 / slotMinutes)` 格：24 分钟的集播到 `20:24`，下一集从 `20:30` 开始，中间留白
+- 55 分钟的集占两格，下一集顺延到下一个半点
+
+留白时段播放器显示「暂停播出 · 下一档 20:00」，节目单里也会出现「留空」行。
+集数播完后默认从头循环，`"loopEpisodes": "stop"` 则跳过。
 
 通用参数：`label`（前端展示的档位名）、`loop`（规则跑完后换种子重来）、`fill`（填满当天）。
 

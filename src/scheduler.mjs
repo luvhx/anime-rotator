@@ -285,6 +285,87 @@ function makeManual(rule, ctx) {
   };
 }
 
+/**
+ * 时间网格（grid）
+ * ------------------------------------------------------------------
+ * 按「整点 / 半点」对齐排片，节目之间留空。
+ *
+ *   { "type": "grid", "start": "20:00", "slotMinutes": 30,
+ *     "seriesPerDay": 3, "episodesPerSeries": 2 }
+ *
+ * 规则：
+ *   - 每天从 start 开始，取 seriesPerDay 部（按天轮换片池），每部 episodesPerSeries 集
+ *   - 每集占用 ceil(时长 / slotMinutes) 个网格；多余的时间留空
+ *   - 下一集从下一个网格点开始（时长不足一个网格也不会提前开始）
+ *   - 片池按 seriesPerDay 步长逐日推进：池子 6 部、每天 3 部 → 周一 A/B/C、周二 D/E/F、周三 A/B/C…
+ */
+function makeGrid(rule, ctx) {
+  const slotMs = Math.max(5, Math.min(180, Number(rule.slotMinutes) || 30)) * 60000;
+  const startSec = parseClock(rule.start || '20:00');
+  const perDay = Math.max(1, Math.min(24, Number(rule.seriesPerDay) || 3));
+  const perSeries = Math.max(1, Math.min(48, Number(rule.episodesPerSeries) || 2));
+  const pool = selectSeries(rule, ctx);
+  if (pool.length === 0) throw new Error('grid 规则：片池为空，请检查 series 或频道的选片条件');
+
+  const dayStartSec = Number(ctx.dayStartSec) || 0;
+  // start 按「墙上时钟」解释，换算成相对播出日起点的偏移
+  const offsetSec = (((startSec - dayStartSec) % 86400) + 86400) % 86400;
+  // 轮换以频道锚点当天为第 0 天，保证锚点当天从片池第一部、第一集开始
+  const anchorDay = localDayIndex(Number(ctx.channel.anchorMs) || 0, ctx.tz);
+  const day = (Number(ctx.dayIndex) || 0) - anchorDay;
+  const dayStartMs = Number(ctx.dayStartMs) || 0;
+
+  const plan = [];
+  let t = 0; // 相对播出日起点（毫秒）
+
+  if (offsetSec > 0) {
+    plan.push({ gapMs: offsetSec * 1000 });
+    t = offsetSec * 1000;
+  }
+
+  for (let j = 0; j < perDay; j++) {
+    const slot = ((day * perDay + j) % pool.length + pool.length) % pool.length;
+    const series = pool[slot];
+    const occurrence = Math.floor((day * perDay + j) / pool.length);
+    const all = ctx.library.episodesOf(series.id);
+    if (!all || all.length === 0) continue;
+
+    const picked = [];
+    for (let k = 0; k < perSeries; k++) {
+      const idx = occurrence * perSeries + k;
+      if (idx < all.length) picked.push(all[idx]);
+      else if (rule.loopEpisodes === 'stop') break;
+      else picked.push(all[idx % all.length]);
+    }
+
+    for (const ep of picked) {
+      plan.push({ ep });
+      const endMs = dayStartMs + t + ep.durationMs;
+      // 向上对齐到网格端点（epoch 对齐，整点/半点在时区里同样成立）
+      const slotEnd = Math.ceil(endMs / slotMs) * slotMs;
+      const gap = Math.max(0, slotEnd - endMs);
+      t += ep.durationMs;
+      if (gap > 0) {
+        plan.push({ gapMs: gap });
+        t += gap;
+      }
+    }
+  }
+
+  let i = 0;
+  return {
+    endless: false,
+    next() {
+      while (i < plan.length) {
+        const item = plan[i++];
+        if (item.gapMs) return { gapMs: item.gapMs };
+        return item.ep;
+      }
+      return null;
+    },
+  };
+}
+
 const RULE_FACTORIES = {
   sequential: makeSequential,
   binge: makeSequential,
@@ -294,6 +375,7 @@ const RULE_FACTORIES = {
   daily: makeDaily,
   daypart: makeDaypart,
   manual: makeManual,
+  grid: makeGrid,
 };
 
 export const RULE_TYPES = Object.keys(RULE_FACTORIES);
@@ -366,6 +448,9 @@ export class ChannelTimeline {
         channel: this.channel,
         tz: this.tz,
         seedPrefix: `${this.channel.id}/${segIndex}/${this.channel.seed}${dayTag}`,
+        dayIndex: localDayIndex(startMs, this.tz),
+        dayStartMs: startMs,
+        dayStartSec: this.channel.dayStartSec || 0,
       };
       const engine = makeRule(seg.rule, ctx);
       return {
@@ -413,6 +498,12 @@ export class ChannelTimeline {
               break;
             }
           }
+          // 留空标记：只推进游标，不产生节目
+          if (ep && typeof ep.gapMs === "number" && ep.gapMs > 0) {
+            cursor = Math.min(dayLimit, cursor + ep.gapMs);
+            progressed = true;
+            continue;
+          }
           entries.push({
             episode: ep,
             relStart: cursor,
@@ -444,11 +535,11 @@ export class ChannelTimeline {
   /** loop 模式：固定循环 */
   cycle() {
     if (!this._cycle) {
-      const { entries, totalMs } = this.expand(this.anchorMs);
-      let acc = 0;
+      const { entries } = this.expand(this.anchorMs);
+      let totalMs = 0;
       for (const e of entries) {
-        e.absStart = this.anchorMs + acc;
-        acc += e.durationMs;
+        e.absStart = this.anchorMs + e.relStart;
+        totalMs = Math.max(totalMs, e.relStart + e.durationMs);
       }
       this._cycle = { entries, totalMs };
     }
@@ -462,21 +553,21 @@ export class ChannelTimeline {
     const start = this.dayStartOf(dayIndex);
     const { entries } = this.expand(start);
     const out = [];
-    let cursor = 0;
     for (const e of entries) {
-      if (cursor >= DAY_MS) break;
-      const room = DAY_MS - cursor;
+      if (e.relStart >= DAY_MS) break;
+      const room = DAY_MS - e.relStart;
       const dur = Math.min(e.durationMs, room);
       if (dur <= 0) break;
       out.push({
         ...e,
-        absStart: start + cursor,
+        absStart: start + e.relStart,
         durationMs: dur,
         truncated: dur < e.durationMs,
       });
-      cursor += dur;
     }
-    const plan = { dayIndex, dayStart: start, entries: out, totalMs: cursor };
+    const last = out[out.length - 1];
+    const totalMs = last ? last.absStart + last.durationMs - start : 0;
+    const plan = { dayIndex, dayStart: start, entries: out, totalMs };
     if (this._dayCache.size > 16) this._dayCache.delete(this._dayCache.keys().next().value);
     this._dayCache.set(dayIndex, plan);
     return plan;
@@ -493,13 +584,14 @@ export class ChannelTimeline {
         offset = nowMs - plan.dayStart;
       }
       const hit = findEntryByTime(plan.entries, nowMs, 'absStart');
-      if (!hit) {
-        // 落在当天节目之外（规则产出不足一天）：顺延到相邻日的首条
-        const nextPlan = nowMs < plan.entries[0].absStart ? plan : this.dayPlan(day + 1);
-        const first = nextPlan.entries[0];
-        return makeResolved(this, first, first.absStart, nowMs, first.truncated);
-      }
-      return makeResolved(this, hit.entry, hit.entry.absStart, nowMs, hit.entry.truncated);
+      if (hit) return makeResolved(this, hit.entry, hit.entry.absStart, nowMs, hit.entry.truncated);
+      // 留空时段：给出下一档，播放器进入待机
+      const next = plan.entries.find((e) => e.absStart > nowMs);
+      if (next) return makeOff(this, next.absStart, next);
+      const nextPlan = this.dayPlan(day + 1);
+      const first = nextPlan.entries[0];
+      if (!first) return makeOff(this, null, null);
+      return makeOff(this, first.absStart, first);
     }
 
     const { entries, totalMs } = this.cycle();
@@ -507,9 +599,14 @@ export class ChannelTimeline {
     const k = Math.floor(delta / totalMs);
     const pos = delta - k * totalMs;
     const hit = findEntryByTime(entries, pos, 'relStart');
-    const entry = hit ? hit.entry : entries[entries.length - 1];
-    const startsAt = this.anchorMs + k * totalMs + entry.relStart;
-    return makeResolved(this, entry, startsAt, nowMs, false);
+    if (hit) {
+      const startsAt = this.anchorMs + k * totalMs + hit.entry.relStart;
+      return makeResolved(this, hit.entry, startsAt, nowMs, false);
+    }
+    const nextUp = entries.find((e) => e.relStart > pos);
+    if (nextUp) return makeOff(this, this.anchorMs + k * totalMs + nextUp.relStart, nextUp);
+    const firstEntry = entries[0];
+    return makeOff(this, this.anchorMs + (k + 1) * totalMs + firstEntry.relStart, firstEntry);
   }
 
   /**
@@ -517,16 +614,23 @@ export class ChannelTimeline {
    */
   schedule(fromMs, toMs, limit = 50) {
     const out = [];
+    const pushGap = (from, to) => {
+      if (to <= from || out.length >= limit) return;
+      out.push({ kind: 'gap', startsAt: from, endsAt: to, durationMs: to - from, truncated: false, segmentLabel: '留空', episode: null });
+    };
     if (this.mode === 'daily') {
       let day = this.dayIndexOf(fromMs);
       let guard = 0;
+      let cursor = fromMs;
       while (out.length < limit && guard++ < 400) {
         const plan = this.dayPlan(day);
         for (const e of plan.entries) {
           const ends = e.absStart + e.durationMs;
           if (ends <= fromMs) continue;
+          if (e.absStart > cursor) pushGap(cursor, e.absStart);
           if (out.length >= limit) break;
           out.push(toProgramItem(e, e.absStart, e.durationMs, e.truncated));
+          cursor = ends;
           if (ends >= toMs) return out;
         }
         day++;
@@ -540,14 +644,20 @@ export class ChannelTimeline {
     let k = Math.floor(delta / totalMs);
     let pos = delta - k * totalMs;
     let guard = 0;
-    // 从当前位置开始顺序遍历
     let idx = entries.findIndex((e) => pos >= e.relStart && pos < e.relStart + e.durationMs);
+    if (idx < 0) idx = entries.findIndex((e) => e.relStart > pos);
     if (idx < 0) idx = 0;
+    let cursor = fromMs;
     while (out.length < limit && guard++ < 100000) {
       const e = entries[idx];
       const startsAt = this.anchorMs + k * totalMs + e.relStart;
-      if (startsAt >= toMs) break;
+      if (startsAt >= toMs) {
+        pushGap(cursor, toMs);
+        break;
+      }
+      if (startsAt > cursor) pushGap(cursor, startsAt);
       out.push(toProgramItem(e, startsAt, e.durationMs, false));
+      cursor = startsAt + e.durationMs;
       idx++;
       if (idx >= entries.length) {
         idx = 0;
@@ -624,6 +734,24 @@ function makeResolved(tl, entry, startsAt, nowMs, truncated) {
     progress: entry.durationMs > 0 ? Math.max(0, Math.min(1, (nowMs - startsAt) / entry.durationMs)) : 0,
     truncated: Boolean(truncated),
     segmentLabel: entry.segmentLabel,
+    channel: tl.channel,
+  };
+}
+
+/** 留空时段：没有节目在播，next 表示下一档 */
+function makeOff(tl, nextAt, entry) {
+  return {
+    off: true,
+    nextAt,
+    next: entry
+      ? {
+          startsAt: nextAt,
+          endsAt: nextAt + entry.durationMs,
+          durationMs: entry.durationMs,
+          segmentLabel: entry.segmentLabel,
+          episode: entry.episode,
+        }
+      : null,
     channel: tl.channel,
   };
 }

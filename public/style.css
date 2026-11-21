@@ -567,3 +567,17 @@ a.ghost.link {
   color: var(--accent-2);
   border-color: rgba(55, 224, 192, 0.45);
 }
+
+/* 留空时段（待机） */
+.overlay .off-title {
+  font-size: clamp(20px, 3.2vw, 34px);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  margin: 0 0 10px;
+  color: var(--fg, #f5f5f7);
+}
+.overlay .off-time {
+  font-size: clamp(14px, 1.8vw, 20px);
+  margin: 0 0 8px;
+  color: var(--accent, #6ea8fe);
+}

@@ -241,5 +241,69 @@ for (const dayStart of ['00:00', '06:00', '04:30']) {
   check(after.startsAt >= plan.dayStart + 86400000, `日切 ${dayStart}：跨越日切点后进入新播出日`);
 }
 
+
+/* --------------------------- 时间网格（grid） --------------------------- */
+
+{
+  const pool = library.series.map((x) => x.displayName); // 合成库共 4 部
+  const gridChannel = {
+    id: 'grid-test',
+    name: '网格',
+    mode: 'daily',
+    anchor: '2026-11-23T00:00:00+08:00', // 周一
+    program: [
+      {
+        fill: true,
+        rule: { type: 'grid', start: '20:00', slotMinutes: 30, seriesPerDay: 2, episodesPerSeries: 2, series: pool },
+      },
+    ],
+  };
+  const gtl = new ChannelTimeline({ channel: gridChannel, library, tz: TZ });
+  const at = (iso) => Date.parse(iso);
+  const dayOf = (iso) => gtl.dayPlan(gtl.dayIndexOf(at(iso)));
+
+  const mon = dayOf('2026-11-23T12:00:00+08:00');
+  const tue = dayOf('2026-11-24T12:00:00+08:00');
+  const wed = dayOf('2026-11-25T12:00:00+08:00');
+
+  check(mon.entries.length === 4, '网格：每天 2 部 × 2 集', mon.entries.length + ' 条');
+  check(tue.entries.length === 4, '网格：周二 2 部 × 2 集', tue.entries.length + ' 条');
+
+  const aligned = mon.entries.every((e) => {
+    const p = localParts(e.absStart, TZ);
+    return p.minute === 0 || p.minute === 30;
+  });
+  check(aligned, '网格：每集都从整点或半点开始');
+
+  const monSeries = new Set(mon.entries.map((e) => e.episode.seriesName));
+  const tueSeries = new Set(tue.entries.map((e) => e.episode.seriesName));
+  check(monSeries.size === 2 && tueSeries.size === 2, '网格：每天 2 部');
+  check([...monSeries].every((x) => !tueSeries.has(x)), '网格：周二换成另外 2 部');
+
+  const monEps = [...new Set(mon.entries.map((e) => e.episode.episode))];
+  check(monEps.includes(1) && monEps.includes(2), '网格：锚点当天从第 1 集开始', monEps.join(','));
+  const wedEps = [...new Set(wed.entries.map((e) => e.episode.episode))];
+  check(wedEps.includes(3) && wedEps.includes(4), '网格：再次轮到同一部时继续第 3、4 集', wedEps.join(','));
+
+  const gaps = [];
+  for (let i = 0; i + 1 < mon.entries.length; i++) {
+    const end = mon.entries[i].absStart + mon.entries[i].durationMs;
+    const nextStart = mon.entries[i + 1].absStart;
+    if (nextStart > end) gaps.push(Math.round((nextStart - end) / 60000));
+  }
+  check(gaps.length > 0, '网格：不足一格时留空', '空档 ' + gaps.join('/') + ' 分钟');
+
+  const last = mon.entries[mon.entries.length - 1];
+  const inGap = gtl.resolve(last.absStart + last.durationMs + 60000);
+  check(inGap.off === true, '网格：空档内返回待机');
+  check(inGap.nextAt > last.absStart + last.durationMs, '网格：待机时给出下一档时间');
+
+  const playing = gtl.resolve(mon.entries[0].absStart + 60000);
+  check(!playing.off && Boolean(playing.episode), '网格：节目内正常定位');
+
+  const items = gtl.schedule(at('2026-11-23T12:00:00+08:00'), at('2026-11-24T12:00:00+08:00'), 100);
+  check(items.some((i) => i.kind === 'gap'), '网格：节目单包含留空行');
+}
+
 console.log(failures === 0 ? '\n自检全部通过 ✓' : `\n${failures} 项失败 ✗`);
 process.exit(failures === 0 ? 0 : 1);

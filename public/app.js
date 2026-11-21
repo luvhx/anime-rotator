@@ -141,6 +141,7 @@ function scheduleFetch(delay = 10000) {
 
 function applyNow(prevFileId) {
   const data = state.now;
+  if (data.off) return applyOff();
   const item = data.now;
   if (!item) return;
 
@@ -166,6 +167,45 @@ function applyNow(prevFileId) {
     `${data.channel.name} · ${data.channel.mode === 'daily' ? '按日编排' : '循环编排'}${data.channel.description ? ' · ' + data.channel.description : ''}`,
   );
   scheduleFetch(10000);
+}
+
+/** 留空时段：停播并显示下一档 */
+function applyOff() {
+  const data = state.now;
+  if (state.activeFileId) {
+    try {
+      player.pause();
+    } catch {
+      /* ignore */
+    }
+    state.activeFileId = null;
+  }
+  const overlay = $('overlay');
+  overlay.classList.remove('hidden');
+  overlay.innerHTML = '';
+  const next = data.next?.[0];
+  const title = document.createElement('p');
+  title.className = 'off-title';
+  title.textContent = '暂停播出';
+  const when = document.createElement('p');
+  when.className = 'off-time';
+  when.textContent = next ? `下一档 ${fmtHHMM(next.startsAt)} · ${next.series}` : '暂无后续节目';
+  const tip = document.createElement('p');
+  tip.className = 'hint';
+  tip.textContent = '节目单按整点 / 半点对齐，空出来的时段留白。';
+  overlay.append(title, when, tip);
+
+  $('seriesName').textContent = '暂停播出';
+  $('epLabel').textContent = '';
+  $('epTitle').textContent = next ? `下一档 ${fmtHHMM(next.startsAt)}` : '';
+  $('segLabel').style.display = 'none';
+  $('directLink').removeAttribute('href');
+  $('epgSub').textContent = next ? `— 至 ${fmtHHMM(next.startsAt)}` : '—';
+  renderEpg();
+  setStatus(`${data.channel.name} · 留空时段`);
+
+  const wait = data.until ? Math.max(3000, Math.min(60000, data.until - (Date.now() + state.clockOffset) + 800)) : 15000;
+  scheduleFetch(wait);
 }
 
 function loadItem(item, announce) {

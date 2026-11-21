@@ -838,3 +838,17 @@ textarea {
   text-align: center;
   color: var(--muted);
 }
+
+/* 留空时段 */
+.epg tr.gap-row td {
+  color: var(--muted, #8b8b93);
+  background: repeating-linear-gradient(45deg, rgba(127, 127, 127, 0.04), rgba(127, 127, 127, 0.04) 6px, transparent 6px, transparent 12px);
+}
+.epg .gap-tag {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px dashed currentColor;
+  font-size: 12px;
+  opacity: 0.8;
+}
