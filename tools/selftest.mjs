@@ -314,6 +314,10 @@ for (const dayStart of ['00:00', '06:00', '04:30']) {
   const playing = gtl.resolve(mon.entries[0].absStart + 60000);
   check(!playing.off && Boolean(playing.episode), '网格：节目内正常定位');
 
+  // 锚点之前的日期（轮换为负）也不能崩
+  const before = gtl.dayPlan(gtl.dayIndexOf(at('2026-11-21T12:00:00+08:00')));
+  check(before.entries.length > 0 && before.entries.every((e) => e.episode), '网格：锚点之前的日期也能排', `${before.entries.length} 条`);
+
   const items = gtl.schedule(at('2026-11-23T12:00:00+08:00'), at('2026-11-24T12:00:00+08:00'), 100);
   check(items.some((i) => i.kind === 'gap'), '网格：节目单包含留空行');
 }

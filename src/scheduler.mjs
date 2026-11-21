@@ -330,9 +330,14 @@ function makeGrid(rule, ctx) {
     const all = ctx.library.episodesOf(series.id);
     if (!all || all.length === 0) continue;
 
+    // 锚点之前的日期 occurrence 会是负数：按周期折算回来，避免取到 undefined
+    const totalOccurrences = Math.max(1, Math.ceil(all.length / perSeries));
+    const cycle = rule.loopEpisodes === 'stop' ? Math.max(0, occurrence) : ((occurrence % totalOccurrences) + totalOccurrences) % totalOccurrences;
+
     const picked = [];
     for (let k = 0; k < perSeries; k++) {
-      const idx = occurrence * perSeries + k;
+      const idx = cycle * perSeries + k;
+      if (idx < 0) continue;
       if (idx < all.length) picked.push(all[idx]);
       else if (rule.loopEpisodes === 'stop') break;
       else picked.push(all[idx % all.length]);
