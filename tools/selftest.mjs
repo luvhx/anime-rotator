@@ -7,7 +7,7 @@
  * 校验：时间轴连续性、起止点定位、循环还原、日编排 24h 覆盖与截断、跨零点时段。
  */
 import { Library } from '../src/library.mjs';
-import { ChannelTimeline, RULE_TYPES } from '../src/scheduler.mjs';
+import { ChannelTimeline, RULE_TYPES, normalizeChannel } from '../src/scheduler.mjs';
 import { dayStartMs, localParts, fmtDuration } from '../src/util.mjs';
 
 const TZ = 'Asia/Shanghai';
@@ -241,6 +241,19 @@ for (const dayStart of ['00:00', '06:00', '04:30']) {
   check(after.startsAt >= plan.dayStart + 86400000, `日切 ${dayStart}：跨越日切点后进入新播出日`);
 }
 
+
+/* --------------------------- 锚点归一化 --------------------------- */
+
+{
+  const once = normalizeChannel({
+    id: 'anchor-test',
+    name: '锚点',
+    anchor: '2026-11-23T00:00:00+08:00',
+    program: [{ rule: { type: 'sequential' } }],
+  });
+  const twice = normalizeChannel(once);
+  check(once.anchorMs === twice.anchorMs, '锚点归一化两次不丢失', new Date(twice.anchorMs).toISOString());
+}
 
 /* --------------------------- 时间网格（grid） --------------------------- */
 

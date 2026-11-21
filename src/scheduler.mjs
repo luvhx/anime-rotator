@@ -803,7 +803,13 @@ export function normalizeChannel(def, tz = 'Asia/Shanghai') {
     seed: def.seed ?? def.id,
     library: def.library || {},
     weights: def.weights || null,
-    anchorMs: def.anchor ? Date.parse(def.anchor) : Date.parse('2024-01-01T00:00:00+08:00'),
+    // 已经归一化过的频道只有 anchorMs（没有 anchor 字符串），必须优先沿用，
+    // 否则每次重新归一化都会被重置成默认锚点
+    anchorMs: Number.isFinite(Number(def.anchorMs))
+      ? Number(def.anchorMs)
+      : def.anchor
+        ? Date.parse(def.anchor)
+        : Date.parse('2024-01-01T00:00:00+08:00'),
     program: program.length > 0 ? program : [{ rule: { type: 'sequential' } }],
   };
   if (Number.isNaN(norm.anchorMs)) throw new Error(`频道 ${norm.id} 的 anchor 时间无法解析：${def.anchor}`);
