@@ -76,11 +76,27 @@ class El {
     this.src = '';
     this.alt = '';
     this.title = '';
-    this.textContent = '';
+    this._text = '';
     this.children = [];
     this.parent = null;
     this.handlers = new Map();
     this.attrs = new Map();
+  }
+  get textContent() {
+    if (this._text) return this._text;
+    return this.children.map((c) => (c instanceof El ? c.textContent : String(c))).join('');
+  }
+  set textContent(v) {
+    this._text = String(v ?? '');
+    this.children = [];
+  }
+  get innerHTML() {
+    return this._html || '';
+  }
+  set innerHTML(v) {
+    this._html = String(v ?? '');
+    // 浏览器里赋空字符串会清空子节点，桩里同步一下
+    if (this._html === '') this.children = [];
   }
   get className() {
     return [...this.classList.set].join(' ');
@@ -101,6 +117,13 @@ class El {
   append(...nodes) {
     for (const n of nodes.flat()) {
       if (n === null || n === undefined || n === false) continue;
+      if (typeof n === 'string' || typeof n === 'number') {
+        const t = new El('#text');
+        t.textContent = String(n);
+        t.parent = this;
+        this.children.push(t);
+        continue;
+      }
       if (!(n instanceof El)) continue;
       n.parent = this;
       this.children.push(n);
@@ -257,6 +280,23 @@ await wait(300);
 check(q('channelList').children.length > 0, '频道列表渲染', `${q('channelList').children.length} 个`);
 check(q('channelEditor').children.length > 0, '编排编辑器渲染', `${q('channelEditor').children.length} 个区块`);
 check(q('btnAddChannel') !== null, '新建频道按钮存在');
+
+// 编排段：摘要 + 时间网格参数区
+const summary0 = q('channelEditor').querySelector('.seg-summary');
+check(Boolean(summary0) && summary0.textContent.length > 5, '编排段显示摘要', summary0 ? summary0.textContent.slice(0, 30) : '(无)');
+
+const segBox = q('channelEditor').querySelector('.seg');
+const typeSel = segBox ? segBox.querySelector('select') : null;
+if (typeSel) {
+  typeSel.value = 'grid';
+  typeSel.dispatch('change');
+  await wait(300);
+  const params = q('channelEditor').querySelector('.seg-params');
+  check(Boolean(params), '时间网格：参数区分组显示');
+  const sum = q('channelEditor').querySelector('.seg-summary');
+  const text = sum ? sum.textContent : '';
+  check(text.includes('每天') && text.includes('对齐'), '时间网格：摘要可读', text.slice(0, 46));
+}
 
 // 切到预览
 tabs[4].dispatch('click');

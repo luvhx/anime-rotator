@@ -775,12 +775,12 @@ function renderChannelEditor() {
               markDirty('channels');
             },
           },
-          el('option', { value: 'loop', selected: ch.mode !== 'daily' }, '循环（整库播完回到开头）'),
-          el('option', { value: 'daily', selected: ch.mode === 'daily' }, '按日编排（00:00 重排 / 24:00 截断）'),
+          el('option', { value: 'loop', selected: ch.mode !== 'daily' }, '循环：把编排铺成一条循环，播完从头再来'),
+          el('option', { value: 'daily', selected: ch.mode === 'daily' }, '按日：每天从日切点重排、填满 24 小时'),
         ),
       ),
       el('label', {}, '描述', el('input', { value: ch.description || '', oninput: (e) => { ch.description = e.target.value; markDirty('channels'); } })),
-      el('label', {}, '时间轴锚点（loop 模式的起点）', el('input', { value: toLocalInput(ch.anchor), type: 'datetime-local', onchange: (e) => { ch.anchor = new Date(e.target.value).toISOString(); markDirty('channels'); } })),
+      el('label', {}, '时间轴锚点（循环模式的起点；日编排里决定轮换从哪天算第 0 天）', el('input', { value: toLocalInput(ch.anchor), type: 'datetime-local', onchange: (e) => { ch.anchor = new Date(e.target.value).toISOString(); markDirty('channels'); } })),
       ch.mode === 'daily'
         ? el('label', {}, '日切时间（重排 + 截断）', el('input', {
             value: ch.dayStart || '00:00',
@@ -840,6 +840,9 @@ function renderChannelEditor() {
   );
   box.append(head);
 
+  box.append(
+    el('p', { class: 'hint' }, '每个「段」就是一条规则，按从上到下的顺序铺满时间轴。改完点右上角「保存设置」，再去「预览」看效果。'),
+  );
   const list = el('div', { class: 'mt' });
   ch.program.forEach((seg, i) => list.append(renderSegment(ch, seg, i)));
   box.append(list);
@@ -982,22 +985,85 @@ function renderSegment(ch, seg, index) {
       'div',
       { class: 'seg-head' },
       el('span', { class: 'idx' }, String(index + 1)),
-      el('input', { value: seg.label || '', placeholder: '段名称（展示用）', oninput: (e) => { seg.label = e.target.value; markDirty('channels'); } }),
+      el('input', { class: 'seg-name', value: seg.label || '', placeholder: '段名称（例如：黄金档）', oninput: (e) => { seg.label = e.target.value; markDirty('channels'); } }),
+      el('span', { class: 'seg-badge' }, meta.label),
       el('span', { class: 'grow' }),
-      el('button', { class: 'btn ghost small', disabled: index === 0, onclick: () => moveSegment(ch, index, -1) }, '↑'),
-      el('button', { class: 'btn ghost small', disabled: index === ch.program.length - 1, onclick: () => moveSegment(ch, index, 1) }, '↓'),
+      el('button', { class: 'btn ghost small', disabled: index === 0, title: '上移', onclick: () => moveSegment(ch, index, -1) }, '↑'),
+      el('button', { class: 'btn ghost small', disabled: index === ch.program.length - 1, title: '下移', onclick: () => moveSegment(ch, index, 1) }, '↓'),
       el('button', { class: 'btn ghost small danger', onclick: () => { ch.program.splice(index, 1); markDirty('channels'); renderChannelEditor(); } }, '删除'),
     ),
     el(
       'div',
-      { class: 'seg-grid' },
-      el('label', {}, '规则', typeSelect),
-      el('label', {}, '段长度', targetSelect),
-      el('label', {}, '数量', numInput()),
-      el('label', {}, '说明', el('span', { class: 'hint' }, meta.desc)),
+      { class: 'seg-row' },
+      el('label', { class: 'field' }, '规则类型', typeSelect, el('span', { class: 'field-hint' }, meta.desc)),
+      el('label', { class: 'field' }, '本段长度', targetSelect, el('span', { class: 'field-hint' }, targetHint(seg))),
+      el('label', { class: 'field' }, '数量', numInput()),
     ),
-    extras.length ? el('div', { class: 'seg-grid mt' }, ...extras) : null,
+    extras.length
+      ? el(
+          'div',
+          { class: 'seg-params' },
+          el('div', { class: 'seg-params-title' }, '规则参数'),
+          el('div', { class: 'seg-grid' }, ...extras),
+        )
+      : null,
+    el('div', { class: 'seg-summary' }, describeSegment(seg)),
   );
+}
+
+/** 段长度选项下面的一句话说明 */
+function targetHint(seg) {
+  const t = targetOf(seg);
+  if (t === 'fill') return '填满当天的剩余时间（日编排）';
+  if (t === 'all') return '把规则跑完一轮为止';
+  return '这一段大约播多少';
+}
+
+function targetSummary(seg) {
+  const t = targetOf(seg);
+  if (t === 'count') return `播 ${seg.count ?? 12} 集`;
+  if (t === 'hours') return `播 ${seg.hours ?? 2} 小时`;
+  if (t === 'minutes') return `播 ${seg.minutes ?? 60} 分钟`;
+  if (t === 'fill') return '填满当天';
+  return '播完一轮';
+}
+
+/** 把当前配置翻译成一句人话，减少「这些参数到底在干嘛」的困惑 */
+function describeSegment(seg) {
+  const rule = seg.rule || {};
+  const type = rule.type || 'sequential';
+  const len = targetSummary(seg);
+  switch (type) {
+    case 'sequential':
+    case 'binge':
+      return `按${rule.order === 'shuffle' ? '随机' : rule.order === 'name' ? '名称' : '片库'}顺序，一部播完再接下一部；本轮${len}。`;
+    case 'interleave':
+      return `跨系列轮播：A 第 1 集 → B 第 1 集 → A 第 2 集…；本轮${len}。`;
+    case 'shuffle':
+      return `全库打散随机播放，一轮播完重新洗牌；本轮${len}。`;
+    case 'weighted':
+      return '按频道权重随机抽取，同一部可能重复出现。';
+    case 'daily':
+      return '每天换一部，当天集序随机。';
+    case 'daypart': {
+      const slots = rule.slots || [];
+      if (slots.length === 0) return '还没有配置时段。';
+      const list = slots.map((x) => `${x.from}-${x.to}${x.label ? ' ' + x.label : ''}`).join('、');
+      return `按时间段切换规则：${list}。`;
+    }
+    case 'manual':
+      return `手动节目单，共 ${(rule.items || []).length} 项。`;
+    case 'grid': {
+      const start = rule.start || '20:00';
+      const slot = rule.slotMinutes || 30;
+      const perDay = rule.seriesPerDay || 3;
+      const perSeries = rule.episodesPerSeries || 2;
+      const pool = (rule.series || []).length;
+      return `每天 ${start} 开始，播 ${perDay} 部 × ${perSeries} 集${pool ? `（片池 ${pool} 部，逐日轮换）` : '（片池=频道选片）'}；按 ${slot} 分钟对齐，不足一格留白；集数用完${rule.loopEpisodes === 'stop' ? '跳过' : '循环'}。`;
+    }
+    default:
+      return '';
+  }
 }
 
 function renderSlots(ch, seg) {
