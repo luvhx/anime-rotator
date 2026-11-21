@@ -320,6 +320,31 @@ for (const dayStart of ['00:00', '06:00', '04:30']) {
 
   const items = gtl.schedule(at('2026-11-23T12:00:00+08:00'), at('2026-11-24T12:00:00+08:00'), 100);
   check(items.some((i) => i.kind === 'gap'), '网格：节目单包含留空行');
+
+  // 集数少于「每部几集」时不重复播同一集
+  const epOf = (id, n) => ({
+    fileId: id + n, season: 1, episode: n, title: 'EP' + n,
+    name: id + ' - S01E0' + n + '.mkv', relPath: 'mini/' + id + '/S01E0' + n + '.mkv',
+    size: 100, lastModified: 0, subtitle: null, container: 'matroska',
+    durationMs: 24 * MIN, durationSource: 'mkv-info',
+  });
+  const miniLib = new Library({
+    version: 1,
+    series: [
+      { id: '/mini/solo', dir: 'mini/solo', name: '单集', displayName: '单集', tmdbId: null, episodes: [epOf('solo', 1)] },
+      { id: '/mini/pair', dir: 'mini/pair', name: '双集', displayName: '双集', tmdbId: null, episodes: [epOf('pair', 1), epOf('pair', 2)] },
+    ],
+  });
+  const miniTl = new ChannelTimeline({
+    channel: { id: 'mini-grid', name: 'mini', mode: 'daily', anchor: '2026-11-23T00:00:00+08:00',
+      program: [{ fill: true, rule: { type: 'grid', start: '20:00', slotMinutes: 30, seriesPerDay: 2, episodesPerSeries: 2, series: ['单集', '双集'] } }] },
+    library: miniLib,
+    tz: TZ,
+  });
+  const miniPlan = miniTl.dayPlan(miniTl.dayIndexOf(at('2026-11-23T12:00:00+08:00')));
+  const miniIds = miniPlan.entries.map((e) => e.episode.fileId);
+  check(miniPlan.entries.length === 3, '网格：集数不足时只播现有的', miniIds.join(','));
+  check(new Set(miniIds).size === miniIds.length, '网格：同一档内不重复播同一集', miniIds.join(','));
 }
 
 console.log(failures === 0 ? '\n自检全部通过 ✓' : `\n${failures} 项失败 ✗`);

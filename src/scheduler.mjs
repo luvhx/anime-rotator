@@ -335,12 +335,18 @@ function makeGrid(rule, ctx) {
     const cycle = rule.loopEpisodes === 'stop' ? Math.max(0, occurrence) : ((occurrence % totalOccurrences) + totalOccurrences) % totalOccurrences;
 
     const picked = [];
+    const usedThisRun = new Set();
     for (let k = 0; k < perSeries; k++) {
-      const idx = cycle * perSeries + k;
+      let idx = cycle * perSeries + k;
       if (idx < 0) continue;
-      if (idx < all.length) picked.push(all[idx]);
-      else if (rule.loopEpisodes === 'stop') break;
-      else picked.push(all[idx % all.length]);
+      if (idx >= all.length) {
+        if (rule.loopEpisodes === 'stop') break;
+        idx %= all.length;
+      }
+      // 同一档里不重复播同一集（集数不够 perSeries 时，跳过剩余的格）
+      if (usedThisRun.has(idx)) break;
+      usedThisRun.add(idx);
+      picked.push(all[idx]);
     }
 
     for (const ep of picked) {
